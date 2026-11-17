@@ -44,11 +44,11 @@ func ParseResolution(s string) (Resolution, bool) {
 func (r Resolution) Table() string {
 	switch r {
 	case Minute:
-		return "points_1m"
+		return "points_minute"
 	case Hour:
-		return "points_1h"
+		return "points_hour"
 	case Day:
-		return "points_1d"
+		return "points_day"
 	default:
 		return ""
 	}

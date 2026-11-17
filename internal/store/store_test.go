@@ -9,9 +9,9 @@ import (
 	"mon/internal/domain"
 )
 
-func openTest(t *testing.T, retentionMinute, retentionHour time.Duration) *DB {
+func openTest(t *testing.T, retentionMinute, retentionHour, retentionDay time.Duration) *DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "test.db"), retentionMinute, retentionHour)
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"), retentionMinute, retentionHour, retentionDay)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -20,7 +20,7 @@ func openTest(t *testing.T, retentionMinute, retentionHour time.Duration) *DB {
 }
 
 func TestRollupMinuteHourDay(t *testing.T) {
-	db := openTest(t, 0, 0)
+	db := openTest(t, 0, 0, 0)
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 
 	if err := db.InsertMinute([]domain.Point{
@@ -57,7 +57,7 @@ func TestRollupMinuteHourDay(t *testing.T) {
 }
 
 func TestMinuteAccumulatesOnConflict(t *testing.T) {
-	db := openTest(t, 0, 0)
+	db := openTest(t, 0, 0, 0)
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 	p := domain.Point{Kind: domain.Temp, Name: "x", TS: base, Avg: 40, Min: 40, Max: 40, N: 1}
 	if err := db.InsertMinute([]domain.Point{p}); err != nil {
@@ -71,15 +71,18 @@ func TestMinuteAccumulatesOnConflict(t *testing.T) {
 	assertPoint(t, m[0].Points[0], base, 45, 40, 50, 2)
 }
 
-func TestPruneKeepsDailyForever(t *testing.T) {
-	db := openTest(t, 48*time.Hour, 90*24*time.Hour)
+func TestPruneRespectsEveryResolution(t *testing.T) {
+	db := openTest(t, 48*time.Hour, 90*24*time.Hour, 5*365*24*time.Hour)
 	now := time.Now().UTC().Truncate(time.Minute)
-	old := now.Add(-100 * 24 * time.Hour).Unix()
+	recent := now.Add(-100 * 24 * time.Hour).Unix()
+	ancient := now.Add(-6 * 365 * 24 * time.Hour).Unix()
 
-	if err := db.InsertMinute([]domain.Point{
-		{Kind: domain.HostCPU, Name: "host", TS: old, Avg: 10, Min: 5, Max: 15, N: 1},
-	}); err != nil {
-		t.Fatal(err)
+	for _, ts := range []int64{recent, ancient} {
+		if err := db.InsertMinute([]domain.Point{
+			{Kind: domain.HostCPU, Name: "host", TS: ts, Avg: 10, Min: 5, Max: 15, N: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := db.Prune(now); err != nil {
 		t.Fatal(err)
@@ -90,13 +93,17 @@ func TestPruneKeepsDailyForever(t *testing.T) {
 	if got := historyKind(t, db, domain.HostCPU, domain.Hour); len(got) != 0 {
 		t.Errorf("hour rows survived prune: %d", len(got))
 	}
-	if got := historyKind(t, db, domain.HostCPU, domain.Day); len(got) != 1 {
-		t.Errorf("daily rows = %d, want 1", len(got))
+	days := historyKind(t, db, domain.HostCPU, domain.Day)
+	if len(days) != 1 || len(days[0].Points) != 1 {
+		t.Fatalf("daily rows = %+v, want only the 100-day-old one", days)
+	}
+	if got := days[0].Points[0].TS; got != domain.Day.Bucket(recent) {
+		t.Errorf("surviving day = %d, want %d", got, domain.Day.Bucket(recent))
 	}
 }
 
 func TestHistoryFiltersByNameAndStep(t *testing.T) {
-	db := openTest(t, 0, 0)
+	db := openTest(t, 0, 0, 0)
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 	if err := db.InsertMinute([]domain.Point{
 		{Kind: domain.Temp, Name: "a", TS: base, Avg: 1, Min: 1, Max: 1, N: 1},
@@ -122,7 +129,7 @@ func TestHistoryFiltersByNameAndStep(t *testing.T) {
 }
 
 func TestWearLogRoundTrip(t *testing.T) {
-	db := openTest(t, 0, 0)
+	db := openTest(t, 0, 0, 0)
 	pct, tbw := int64(3), int64(123456789)
 	w := domain.WearObservation{Disk: "nvme0n1", TS: 100, Model: "Samsung", Serial: "S1",
 		PercentageUsed: &pct, TBWBytes: &tbw,
@@ -185,5 +192,53 @@ func assertPoint(t *testing.T, p api.SeriesPoint, ts int64, avg, minV, maxV floa
 	if p.TS != ts || p.Avg != avg || p.Min != minV || p.Max != maxV || p.N != n {
 		t.Errorf("point = %+v, want ts=%d avg=%v min=%v max=%v n=%d",
 			p, ts, avg, minV, maxV, n)
+	}
+}
+
+func TestOpenIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reopen.db")
+	first, err := Open(path, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
+	if err := first.InsertMinute([]domain.Point{
+		{Kind: domain.Temp, Name: "cpu", TS: base, Avg: 40, Min: 40, Max: 40, N: 1},
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Open(path, 0, 0, 0)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	defer second.Close()
+	got, err := second.History(domain.Temp, nil, base, base+60, domain.Minute)
+	if err != nil {
+		t.Fatalf("history after reopen: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Points) != 1 || got[0].Points[0].Avg != 40 {
+		t.Errorf("history after reopen = %+v", got)
+	}
+}
+
+func TestWearAppendIsIdempotent(t *testing.T) {
+	db := openTest(t, 0, 0, 0)
+	row := domain.WearObservation{Disk: "nvme0n1", TS: 100, Model: "Samsung",
+		Reasons: []domain.WearReason{domain.ReasonFirst}}
+	for i := 0; i < 2; i++ {
+		if err := db.AppendWear(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log, err := db.WearLog(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 1 {
+		t.Errorf("retried append duplicated rows: %+v", log)
 	}
 }

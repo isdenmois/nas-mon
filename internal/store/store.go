@@ -6,86 +6,35 @@ package store
 
 import (
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 
 	"mon/internal/api"
 	"mon/internal/domain"
 )
 
+//go:embed migrations/*.sql
+var migrations embed.FS
+
 // DB is the SQLite-backed history store.
 type DB struct {
 	sql             *sql.DB
 	retentionMinute time.Duration
 	retentionHour   time.Duration
+	retentionDay    time.Duration
 }
 
 // Wear is one SSD wear snapshot.
 
-const schema = `
-CREATE TABLE IF NOT EXISTS series (
-	id   INTEGER PRIMARY KEY,
-	kind TEXT NOT NULL,
-	name TEXT NOT NULL,
-	UNIQUE (kind, name)
-);
-
-CREATE TABLE IF NOT EXISTS points_1m (
-	series_id INTEGER NOT NULL,
-	ts        INTEGER NOT NULL,
-	avg       REAL NOT NULL,
-	min       REAL NOT NULL,
-	max       REAL NOT NULL,
-	n         INTEGER NOT NULL,
-	PRIMARY KEY (series_id, ts)
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS points_1m_ts ON points_1m (ts);
-
-CREATE TABLE IF NOT EXISTS points_1h (
-	series_id INTEGER NOT NULL,
-	ts        INTEGER NOT NULL,
-	avg       REAL NOT NULL,
-	min       REAL NOT NULL,
-	max       REAL NOT NULL,
-	n         INTEGER NOT NULL,
-	PRIMARY KEY (series_id, ts)
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS points_1h_ts ON points_1h (ts);
-
-CREATE TABLE IF NOT EXISTS points_1d (
-	series_id INTEGER NOT NULL,
-	ts        INTEGER NOT NULL,
-	avg       REAL NOT NULL,
-	min       REAL NOT NULL,
-	max       REAL NOT NULL,
-	n         INTEGER NOT NULL,
-	PRIMARY KEY (series_id, ts)
-) WITHOUT ROWID;
-
-CREATE TABLE IF NOT EXISTS wear_log (
-	id              INTEGER PRIMARY KEY,
-	disk            TEXT NOT NULL,
-	ts              INTEGER NOT NULL,
-	model           TEXT NOT NULL DEFAULT '',
-	serial          TEXT NOT NULL DEFAULT '',
-	percentage_used INTEGER,
-	tbw_bytes       INTEGER,
-	power_on_hours  INTEGER,
-	media_errors    INTEGER,
-	reallocated     INTEGER,
-	temp_c          INTEGER,
-	reason          TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS wear_log_disk_ts ON wear_log (disk, ts);
-`
-
-// Open opens or creates the database. retentionMinute/retentionHour of zero
-// keep that resolution forever.
-func Open(path string, retentionMinute, retentionHour time.Duration) (*DB, error) {
+// Open opens the database and applies the embedded migrations. A zero
+// retention keeps that resolution forever.
+func Open(path string, retentionMinute, retentionHour, retentionDay time.Duration) (*DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -98,7 +47,7 @@ func Open(path string, retentionMinute, retentionHour time.Duration) (*DB, error
 		sqlDB.Close()
 		return nil, fmt.Errorf("ping sqlite %s: %w", path, err)
 	}
-	if _, err := sqlDB.Exec(schema); err != nil {
+	if err := migrate(sqlDB); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate sqlite %s: %w", path, err)
 	}
@@ -106,7 +55,18 @@ func Open(path string, retentionMinute, retentionHour time.Duration) (*DB, error
 		sql:             sqlDB,
 		retentionMinute: retentionMinute,
 		retentionHour:   retentionHour,
+		retentionDay:    retentionDay,
 	}, nil
+}
+
+// migrate applies every embedded migration that has not run yet.
+func migrate(db *sql.DB) error {
+	goose.SetBaseFS(migrations)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return err
+	}
+	return goose.Up(db, "migrations")
 }
 
 // Close closes the underlying database.
@@ -145,15 +105,15 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`
-			INSERT INTO points_1m (series_id, ts, avg, min, max, n)
+		_, err = tx.Exec(fmt.Sprintf(`
+			INSERT INTO %s (series_id, ts, avg, min, max, n)
 			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT (series_id, ts) DO UPDATE SET
-				avg = (points_1m.avg * points_1m.n + excluded.avg * excluded.n) /
-				      (points_1m.n + excluded.n),
-				min = MIN(points_1m.min, excluded.min),
-				max = MAX(points_1m.max, excluded.max),
-				n   = points_1m.n + excluded.n`,
+				avg = (%[1]s.avg * %[1]s.n + excluded.avg * excluded.n) /
+				      (%[1]s.n + excluded.n),
+				min = MIN(%[1]s.min, excluded.min),
+				max = MAX(%[1]s.max, excluded.max),
+				n   = %[1]s.n + excluded.n`, domain.Minute.Table()),
 			id, p.TS, p.Avg, p.Min, p.Max, p.N)
 		if err != nil {
 			return fmt.Errorf("insert minute %s:%s: %w", p.Kind, p.Name, err)
@@ -213,6 +173,12 @@ func (d *DB) Prune(now time.Time) error {
 			return fmt.Errorf("prune hours: %w", err)
 		}
 	}
+	if d.retentionDay > 0 {
+		if _, err := d.sql.Exec(`DELETE FROM `+domain.Day.Table()+` WHERE ts < ?`,
+			now.Add(-d.retentionDay).Unix()); err != nil {
+			return fmt.Errorf("prune days: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -263,9 +229,9 @@ func (d *DB) History(kind domain.Kind, names []string, from, to int64, res domai
 	return out, rows.Err()
 }
 
-// LastWear returns the newest wear row for a disk, or nil when there is none.
-func (d *DB) LastWear(disk string) (*domain.WearObservation, error) {
-	row := d.sql.QueryRow(wearSelect+` WHERE disk = ? ORDER BY id DESC LIMIT 1`, disk)
+// LastWear returns the newest wear row for a device, or nil when there is one.
+func (d *DB) LastWear(device string) (*domain.WearObservation, error) {
+	row := d.sql.QueryRow(wearSelect+` WHERE w.device = ? ORDER BY w.ts DESC LIMIT 1`, device)
 	w, err := scanWear(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -273,24 +239,32 @@ func (d *DB) LastWear(disk string) (*domain.WearObservation, error) {
 	return w, err
 }
 
-// AppendWear stores a wear row.
+// AppendWear stores a wear row. Writing the same device and timestamp twice is
+// an update, so a retried poll cannot duplicate history.
 func (d *DB) AppendWear(w domain.WearObservation) error {
 	_, err := d.sql.Exec(`
 		INSERT INTO wear_log
-			(disk, ts, model, serial, percentage_used, tbw_bytes,
+			(device, ts, model, serial, percentage_used, tbw_bytes,
 			 power_on_hours, media_errors, reallocated, temp_c, reason)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (device, ts) DO UPDATE SET
+			model = excluded.model, serial = excluded.serial,
+			percentage_used = excluded.percentage_used, tbw_bytes = excluded.tbw_bytes,
+			power_on_hours = excluded.power_on_hours, media_errors = excluded.media_errors,
+			reallocated = excluded.reallocated, temp_c = excluded.temp_c,
+			reason = excluded.reason`,
 		w.Disk, w.TS, w.Model, w.Serial, w.PercentageUsed, w.TBWBytes,
 		w.PowerOnHours, w.MediaErrors, w.Reallocated, w.TempC,
 		domain.FormatReasons(w.Reasons))
 	return err
 }
 
-// WearLatest returns the newest wear row per disk.
+// WearLatest returns the newest wear row per device.
 func (d *DB) WearLatest() ([]domain.WearObservation, error) {
 	rows, err := d.sql.Query(wearSelect + `
-		WHERE id IN (SELECT MAX(id) FROM wear_log GROUP BY disk)
-		ORDER BY disk`)
+		JOIN (SELECT device, MAX(ts) AS ts FROM wear_log GROUP BY device) latest
+		  ON latest.device = w.device AND latest.ts = w.ts
+		ORDER BY w.device`)
 	if err != nil {
 		return nil, err
 	}
@@ -306,12 +280,12 @@ func (d *DB) WearLatest() ([]domain.WearObservation, error) {
 	return out, rows.Err()
 }
 
-// WearLog returns the newest limit wear rows across all disks.
+// WearLog returns the newest limit wear rows across all devices.
 func (d *DB) WearLog(limit int) ([]domain.WearObservation, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := d.sql.Query(wearSelect+` ORDER BY id DESC LIMIT ?`, limit)
+	rows, err := d.sql.Query(wearSelect+` ORDER BY w.ts DESC, w.device LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -328,9 +302,9 @@ func (d *DB) WearLog(limit int) ([]domain.WearObservation, error) {
 }
 
 const wearSelect = `
-	SELECT disk, ts, model, serial, percentage_used, tbw_bytes,
-	       power_on_hours, media_errors, reallocated, temp_c, reason
-	FROM wear_log`
+	SELECT w.device, w.ts, w.model, w.serial, w.percentage_used, w.tbw_bytes,
+	       w.power_on_hours, w.media_errors, w.reallocated, w.temp_c, w.reason
+	FROM wear_log w`
 
 type scanner interface {
 	Scan(dest ...any) error

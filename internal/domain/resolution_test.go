@@ -11,9 +11,9 @@ func TestResolutionTable(t *testing.T) {
 		name  string
 		table string
 	}{
-		{Minute, "minute", "points_1m"},
-		{Hour, "hour", "points_1h"},
-		{Day, "day", "points_1d"},
+		{Minute, "minute", "points_minute"},
+		{Hour, "hour", "points_hour"},
+		{Day, "day", "points_day"},
 	}
 	for _, tc := range cases {
 		if got := tc.res.String(); got != tc.name {

@@ -156,6 +156,7 @@ bun install  # зависимости фронтенда и e2e
 just install-hooks  # установить git-хуки (один раз)
 just web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
 just test    # go test ./...
+just unit    # frontend unit tests (Vitest)
 just vet
 just build   # bin/mon
 just docker  # docker compose up -d --build
@@ -169,6 +170,19 @@ just lint    # Biome: линт и проверка форматирования
 ```sh
 MON_DB_PATH=./data/mon.db MON_SMART_INTERVAL=0 go run ./cmd/mon
 ```
+
+### Unit-тесты
+
+Frontend-тесты используют Vitest и `@testing-library/vue`, лежат рядом с
+исходниками (`web/src/**/*.test.ts`) и написаны по AAA-паттерну. Сценарии
+описаны в `doc/test/*.test-case.md`.
+
+```sh
+just unit                 # vitest run
+bun run test:unit:watch   # режим наблюдения
+```
+
+Go-тесты запускаются через `just test`.
 
 ### Линтинг фронтенда
 
@@ -193,8 +207,8 @@ just install-hooks   # bunx lefthook install
 ```
 
 `pre-commit` последовательно форматирует и линтит фронтенд, проверяет типы и
-запускает Go-тесты. `pre-push` прогоняет Playwright e2e. Пропустить хуки можно
-через `LEFTHOOK=0 git commit ...` или `LEFTHOOK=0 git push`.
+запускает Go- и frontend-тесты. `pre-push` прогоняет Playwright e2e. Пропустить
+хуки можно через `LEFTHOOK=0 git commit ...` или `LEFTHOOK=0 git push`.
 
 ### E2E-тесты
 

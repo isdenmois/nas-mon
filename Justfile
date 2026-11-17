@@ -31,6 +31,10 @@ build: web
 test:
     go test ./...
 
+# Run frontend unit tests
+unit:
+    bun run test:unit
+
 # Run Go vet
 vet:
     go vet ./...

@@ -1,0 +1,7 @@
+/data/
+*.db
+*.db-wal
+*.db-shm
+/web/node_modules/
+/internal/server/dist/*
+!/internal/server/dist/index.html

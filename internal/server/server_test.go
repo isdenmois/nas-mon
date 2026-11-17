@@ -11,10 +11,7 @@ import (
 	"time"
 
 	"mon/internal/api"
-	"mon/internal/collect"
 	"mon/internal/domain"
-	"mon/internal/state"
-	"mon/internal/store"
 )
 
 type historyCall struct {
@@ -25,27 +22,28 @@ type historyCall struct {
 	step  domain.Resolution
 }
 
-type fakeStore struct {
-	calls      []historyCall
-	histories  map[domain.Kind][]api.SeriesHistory
-	wearLatest []store.Wear
-	wearLog    []store.Wear
-	err        error
+type fakeMonitor struct {
+	overview  api.Overview
+	histories map[domain.Kind][]api.SeriesHistory
+	latest    []api.Wear
+	log       []api.Wear
+	calls     []historyCall
+	err       error
 }
 
-func (f *fakeStore) History(kind domain.Kind, names []string, from, to int64, step domain.Resolution) ([]api.SeriesHistory, error) {
-	f.calls = append(f.calls, historyCall{kind, names, from, to, step})
+func (f *fakeMonitor) Snapshot() api.Overview { return f.overview }
+
+func (f *fakeMonitor) History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+	f.calls = append(f.calls, historyCall{kind, names, from, to, res})
 	return f.histories[kind], f.err
 }
 
-func (f *fakeStore) WearLatest() ([]store.Wear, error) { return f.wearLatest, f.err }
-func (f *fakeStore) WearLog(int) ([]store.Wear, error) {
-	return f.wearLog, f.err
-}
+func (f *fakeMonitor) WearLatest() ([]api.Wear, error) { return f.latest, f.err }
+func (f *fakeMonitor) WearLog(int) ([]api.Wear, error) { return f.log, f.err }
 
-func testServer(t *testing.T, st *state.State, db Store) (*Server, http.Handler) {
+func testServer(t *testing.T, mon Monitor) (*Server, http.Handler) {
 	t.Helper()
-	s := New(st, db, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
+	s := New(mon, slog.New(slog.NewTextHandler(testWriter{t}, nil)))
 	return s, s.Handler()
 }
 
@@ -72,22 +70,23 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func TestOverview(t *testing.T) {
-	st := state.New()
 	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-	st.SetTemps(at, []collect.TempReading{{Key: "k10temp:Tctl", Chip: "k10temp", Label: "Tctl", Celsius: 42}})
-	st.SetHost(at, collect.HostSnapshot{CPUPct: 12.5, MemUsed: 100, MemTotal: 200, MemPct: 50,
-		Load1: 1, Load5: 2, Load15: 3, NetRxBps: 10, NetTxBps: 20})
-	st.SetContainers(at, []collect.ContainerSnapshot{{Name: "web", CPUPct: 5}})
-	st.SetVolumes(at, []collect.VolumeSnapshot{{Name: "/", UsedPct: 42}})
-	st.SetSmart(at, []collect.DiskSmart{{Disk: "nvme0n1", Model: "Samsung"}})
-	st.SetCollector("temp", at, nil, time.Millisecond)
+	mon := &fakeMonitor{overview: api.Overview{
+		TS:         at,
+		Temps:      []api.TempReading{{Key: "k10temp:Tctl", Chip: "k10temp", Label: "Tctl", Celsius: 42}},
+		Host:       &api.HostSnapshot{CPUPct: 12.5, MemUsed: 100, MemTotal: 200, MemPct: 50},
+		Containers: []api.ContainerSnapshot{{Name: "web", CPUPct: 5}},
+		Volumes:    []api.VolumeSnapshot{{Name: "/", UsedPct: 42}},
+		Smart:      []api.DiskSmart{{Disk: "nvme0n1", Model: "Samsung"}},
+		Collectors: map[string]api.CollectorStatus{"temp": {LastSuccess: at, Runs: 1}},
+	}}
 
-	_, h := testServer(t, st, &fakeStore{})
+	_, h := testServer(t, mon)
 	rec := get(h, "/api/overview")
 	if rec.Code != 200 {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
-	got := decode[state.Snapshot](t, rec)
+	got := decode[api.Overview](t, rec)
 	if len(got.Temps) != 1 || got.Temps[0].Key != "k10temp:Tctl" {
 		t.Errorf("temps = %+v", got.Temps)
 	}
@@ -104,21 +103,21 @@ func TestOverview(t *testing.T) {
 
 func TestHistoryRangeAndGrouping(t *testing.T) {
 	now := time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC)
-	db := &fakeStore{histories: map[domain.Kind][]api.SeriesHistory{
-		domain.Temp: {{Kind: "temp", Name: "a", Points: []api.SeriesPoint{{TS: 1, Avg: 40}}}},
+	mon := &fakeMonitor{histories: map[domain.Kind][]api.SeriesHistory{
+		domain.Temp:    {{Kind: "temp", Name: "a", Points: []api.SeriesPoint{{TS: 1, Avg: 40}}}},
+		domain.HostCPU: {{Kind: "host_cpu", Name: "host"}},
 	}}
-	st := state.New()
-	s, h := testServer(t, st, db)
+	s, h := testServer(t, mon)
 	s.now = func() time.Time { return now }
 
 	rec := get(h, "/api/history?range=7d&series=temp:a&series=temp:b&series=host_cpu:host")
 	if rec.Code != 200 {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
-	if len(db.calls) != 2 {
-		t.Fatalf("calls = %+v", db.calls)
+	if len(mon.calls) != 2 {
+		t.Fatalf("calls = %+v", mon.calls)
 	}
-	tempCall := db.calls[0]
+	tempCall := mon.calls[0]
 	if tempCall.kind != domain.Temp || strings.Join(tempCall.names, ",") != "a,b" ||
 		tempCall.step != domain.Hour {
 		t.Errorf("temp call = %+v", tempCall)
@@ -128,21 +127,21 @@ func TestHistoryRangeAndGrouping(t *testing.T) {
 	if tempCall.from != wantFrom || tempCall.to != now.Unix() {
 		t.Errorf("window = %d..%d, want %d..%d", tempCall.from, tempCall.to, wantFrom, now.Unix())
 	}
-	if db.calls[1].kind != domain.HostCPU {
-		t.Errorf("second call = %+v", db.calls[1])
+	if mon.calls[1].kind != domain.HostCPU {
+		t.Errorf("second call = %+v", mon.calls[1])
 	}
 
 	resp := decode[struct {
 		Step   string              `json:"step"`
 		Series []api.SeriesHistory `json:"series"`
 	}](t, rec)
-	if resp.Step != "hour" || len(resp.Series) != 1 || resp.Series[0].Points[0].Avg != 40 {
+	if resp.Step != "hour" || len(resp.Series) != 2 || resp.Series[0].Points[0].Avg != 40 {
 		t.Errorf("response = %+v", resp)
 	}
 }
 
 func TestHistoryRejectsBadInput(t *testing.T) {
-	_, h := testServer(t, state.New(), &fakeStore{})
+	_, h := testServer(t, &fakeMonitor{})
 	cases := []string{
 		"/api/history?range=24h",
 		"/api/history?range=24h&series=oops",
@@ -157,9 +156,9 @@ func TestHistoryRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestHistoryStoreError(t *testing.T) {
-	db := &fakeStore{err: errors.New("db down")}
-	_, h := testServer(t, state.New(), db)
+func TestHistoryMonitorError(t *testing.T) {
+	mon := &fakeMonitor{err: errors.New("db down")}
+	_, h := testServer(t, mon)
 	if rec := get(h, "/api/history?range=1h&series=temp:a"); rec.Code != 500 {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -167,18 +166,18 @@ func TestHistoryStoreError(t *testing.T) {
 
 func TestWear(t *testing.T) {
 	pct := int64(3)
-	db := &fakeStore{
-		wearLatest: []store.Wear{{Disk: "nvme0n1", PercentageUsed: &pct}},
-		wearLog:    []store.Wear{{Disk: "nvme0n1", TS: 100, Reason: "daily"}},
+	mon := &fakeMonitor{
+		latest: []api.Wear{{Disk: "nvme0n1", PercentageUsed: &pct}},
+		log:    []api.Wear{{Disk: "nvme0n1", TS: 100, Reason: "daily"}},
 	}
-	_, h := testServer(t, state.New(), db)
+	_, h := testServer(t, mon)
 	rec := get(h, "/api/wear?limit=5")
 	if rec.Code != 200 {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	got := decode[struct {
-		Latest []store.Wear `json:"latest"`
-		Log    []store.Wear `json:"log"`
+		Latest []api.Wear `json:"latest"`
+		Log    []api.Wear `json:"log"`
 	}](t, rec)
 	if len(got.Latest) != 1 || *got.Latest[0].PercentageUsed != 3 ||
 		len(got.Log) != 1 || got.Log[0].Reason != "daily" {
@@ -196,24 +195,28 @@ func TestWear(t *testing.T) {
 }
 
 func TestMetricsExposition(t *testing.T) {
-	st := state.New()
 	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
-	st.SetTemps(at, []collect.TempReading{
-		{Key: `nvme:nvme0`, Chip: "nvme", Label: "Composite", Celsius: 35.5},
-		{Key: `k10temp:Tctl`, Chip: "k10temp", Label: `T"ctl`, Celsius: 60},
-	})
-	st.SetHost(at, collect.HostSnapshot{CPUPct: 25, MemUsed: 512, MemTotal: 1024, MemPct: 50,
-		Load1: 0.5, NetRxBps: 100, NetTxBps: 200})
-	st.SetContainers(at, []collect.ContainerSnapshot{{Name: "web", Image: "nginx", ID: "abc",
-		CPUPct: 12.5, MemUsed: 10, MemLimit: 20, MemPct: 50, NetRxBps: 1, NetTxBps: 2}})
-	st.SetVolumes(at, []collect.VolumeSnapshot{{Name: "/", Used: 40, Total: 100, UsedPct: 40}})
 	pct, tbw, hours := int64(3), int64(1000), int64(200)
-	st.SetSmart(at, []collect.DiskSmart{{Disk: "nvme0n1", Model: "Samsung", Serial: "S1",
-		PercentageUsed: &pct, TBWBytes: &tbw, PowerOnHours: &hours}})
-	st.SetCollector("temp", at, nil, 2*time.Millisecond)
-	st.SetCollector("docker", at, errors.New("socket gone"), 0)
+	mon := &fakeMonitor{overview: api.Overview{
+		TS: at,
+		Temps: []api.TempReading{
+			{Key: `nvme:nvme0`, Chip: "nvme", Label: "Composite", Celsius: 35.5},
+			{Key: `k10temp:Tctl`, Chip: "k10temp", Label: `T"ctl`, Celsius: 60},
+		},
+		Host: &api.HostSnapshot{CPUPct: 25, MemUsed: 512, MemTotal: 1024, MemPct: 50,
+			Load1: 0.5, NetRxBps: 100, NetTxBps: 200},
+		Containers: []api.ContainerSnapshot{{Name: "web", Image: "nginx", ID: "abc",
+			CPUPct: 12.5, MemUsed: 10, MemLimit: 20, MemPct: 50, NetRxBps: 1, NetTxBps: 2}},
+		Volumes: []api.VolumeSnapshot{{Name: "/", Used: 40, Total: 100, UsedPct: 40}},
+		Smart: []api.DiskSmart{{Disk: "nvme0n1", Model: "Samsung", Serial: "S1",
+			PercentageUsed: &pct, TBWBytes: &tbw, PowerOnHours: &hours}},
+		Collectors: map[string]api.CollectorStatus{
+			"temp":   {LastSuccess: at, DurationMS: 2},
+			"docker": {LastError: "socket gone"},
+		},
+	}}
 
-	_, h := testServer(t, st, &fakeStore{})
+	_, h := testServer(t, mon)
 	rec := get(h, "/metrics")
 	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("status = %d, content-type = %q", rec.Code, rec.Header().Get("Content-Type"))
@@ -238,7 +241,7 @@ func TestMetricsExposition(t *testing.T) {
 }
 
 func TestHealthAndStatic(t *testing.T) {
-	_, h := testServer(t, state.New(), &fakeStore{})
+	_, h := testServer(t, &fakeMonitor{})
 	if rec := get(h, "/healthz"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Errorf("health = %d %s", rec.Code, rec.Body)
 	}

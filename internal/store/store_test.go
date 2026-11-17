@@ -124,12 +124,13 @@ func TestHistoryFiltersByNameAndStep(t *testing.T) {
 func TestWearLogRoundTrip(t *testing.T) {
 	db := openTest(t, 0, 0)
 	pct, tbw := int64(3), int64(123456789)
-	w := Wear{Disk: "nvme0n1", TS: 100, Model: "Samsung", Serial: "S1",
-		PercentageUsed: &pct, TBWBytes: &tbw, Reason: "change"}
+	w := domain.WearObservation{Disk: "nvme0n1", TS: 100, Model: "Samsung", Serial: "S1",
+		PercentageUsed: &pct, TBWBytes: &tbw,
+		Reasons: []domain.WearReason{domain.ReasonWear, domain.ReasonTBW}}
 	if err := db.AppendWear(w); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AppendWear(Wear{Disk: "nvme1n1", TS: 200, Model: "WD"}); err != nil {
+	if err := db.AppendWear(domain.WearObservation{Disk: "nvme1n1", TS: 200, Model: "WD"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,6 +140,9 @@ func TestWearLogRoundTrip(t *testing.T) {
 	}
 	if *last.PercentageUsed != 3 || *last.TBWBytes != 123456789 || last.Model != "Samsung" {
 		t.Errorf("last = %+v", last)
+	}
+	if got := domain.FormatReasons(last.Reasons); got != "wear+tbw" {
+		t.Errorf("reasons = %q, want wear+tbw", got)
 	}
 	if last, _ := db.LastWear("missing"); last != nil {
 		t.Errorf("missing disk = %+v", last)

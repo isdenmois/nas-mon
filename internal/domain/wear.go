@@ -19,7 +19,8 @@ const (
 const TBWStep = int64(100_000_000_000)
 
 // WearObservation is one SSD wear reading. Every counter except the identity is
-// optional because not every drive reports everything.
+// optional because not every drive reports everything. Reasons is empty for a
+// freshly collected observation and says why a stored row was worth writing.
 type WearObservation struct {
 	Disk           string
 	TS             int64
@@ -31,6 +32,7 @@ type WearObservation struct {
 	MediaErrors    *int64
 	Reallocated    *int64
 	TempC          *int64
+	Reasons        []WearReason
 }
 
 // Decide reports the reasons cur deserves a new wear row, comparing against the
@@ -86,4 +88,17 @@ func FormatReasons(reasons []WearReason) string {
 		parts[i] = string(r)
 	}
 	return strings.Join(parts, "+")
+}
+
+// ParseReasons is the inverse of FormatReasons.
+func ParseReasons(raw string) []WearReason {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, "+")
+	out := make([]WearReason, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, WearReason(p))
+	}
+	return out
 }

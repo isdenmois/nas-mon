@@ -15,11 +15,11 @@ import (
 
 // TempReading is one temperature sensor value.
 type TempReading struct {
-	Key     string  `json:"key"`
-	Chip    string  `json:"chip"`
-	Label   string  `json:"label"`
-	Celsius float64 `json:"celsius"`
-	Warn    bool    `json:"warn"`
+	Key     string
+	Chip    string
+	Label   string
+	Celsius float64
+	Warn    bool
 }
 
 // Hwmon reads temperatures from /sys/class/hwmon. By default it shows the CPU

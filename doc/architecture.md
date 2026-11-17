@@ -12,7 +12,7 @@ Six packages, one arrow. Everything below points down; nothing points sideways.
 | `internal/domain` | nothing | Metric vocabulary and the rules over it. Pure Go: no I/O, no clock, no JSON, no SQL. |
 | `internal/api` | `domain` | The HTTP/JSON contract. Wire structs only, with `json` tags. |
 | `internal/collect` | nothing | Linux/Docker adapters. Reads `/proc`, `/sys`, the Docker socket, `smartctl`. Returns plain snapshots. |
-| `internal/monitor` | `domain`, `api` | Use cases: ingest a snapshot, bucket samples, flush, wear policy, query history, serve the overview snapshot. Declares the ports it needs. |
+| `internal/monitor` | `domain`, `api`, `collect` (ingest mapping only) | Use cases: ingest a snapshot, bucket samples, flush, wear policy, query history, serve the overview snapshot. Declares the ports it needs. |
 | `internal/store` | `domain`, `api` | The only package that contains SQL. Implements monitor's storage port. |
 | `internal/httpapi` | `api`, `domain`, `monitor` | HTTP adapters: routing, parameter parsing, JSON encoding, Prometheus exposition, static files. |
 | `internal/app` | everything | Composition root: construct adapters, schedule collector loops, own startup and shutdown. |
@@ -24,7 +24,9 @@ Rules:
 1. **`domain` imports nothing internal.** If a rule needs the clock, it takes a
    `time.Time` argument; if it needs storage, the caller does the I/O.
 2. **No adapter imports another adapter.** `collect` never sees `store`,
-   `httpapi` never sees `store`, `store` never sees `httpapi`.
+   `httpapi` never sees `store`, `store` never sees `httpapi`. The single
+   exception is `monitor/ingest.go`, which reads collector snapshots to turn
+   them into samples and wire types — that mapping is its job.
 3. **Interfaces belong to the consumer**, not the implementer and not to a
    `ports` package. `monitor` declares what it needs from storage; `httpapi`
    declares what it needs from `monitor`. `app` passes the concrete types in.

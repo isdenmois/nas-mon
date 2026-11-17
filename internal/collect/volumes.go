@@ -13,11 +13,11 @@ import (
 
 // VolumeSnapshot is the usage of one monitored filesystem.
 type VolumeSnapshot struct {
-	Name          string  `json:"name"`
-	ContainerPath string  `json:"container_path"`
-	Used          uint64  `json:"used"`
-	Total         uint64  `json:"total"`
-	UsedPct       float64 `json:"used_pct"`
+	Name          string
+	ContainerPath string
+	Used          uint64
+	Total         uint64
+	UsedPct       float64
 }
 
 // Volumes reports usage for every subdirectory of Dir, which compose maps to

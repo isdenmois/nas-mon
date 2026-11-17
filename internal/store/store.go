@@ -25,19 +25,6 @@ type DB struct {
 }
 
 // Wear is one SSD wear snapshot.
-type Wear struct {
-	Disk           string `json:"disk"`
-	TS             int64  `json:"ts"`
-	Model          string `json:"model,omitempty"`
-	Serial         string `json:"serial,omitempty"`
-	PercentageUsed *int64 `json:"percentage_used,omitempty"`
-	TBWBytes       *int64 `json:"tbw_bytes,omitempty"`
-	PowerOnHours   *int64 `json:"power_on_hours,omitempty"`
-	MediaErrors    *int64 `json:"media_errors,omitempty"`
-	Reallocated    *int64 `json:"reallocated,omitempty"`
-	TempC          *int64 `json:"temp_c,omitempty"`
-	Reason         string `json:"reason,omitempty"`
-}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS series (
@@ -277,7 +264,7 @@ func (d *DB) History(kind domain.Kind, names []string, from, to int64, res domai
 }
 
 // LastWear returns the newest wear row for a disk, or nil when there is none.
-func (d *DB) LastWear(disk string) (*Wear, error) {
+func (d *DB) LastWear(disk string) (*domain.WearObservation, error) {
 	row := d.sql.QueryRow(wearSelect+` WHERE disk = ? ORDER BY id DESC LIMIT 1`, disk)
 	w, err := scanWear(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -286,20 +273,21 @@ func (d *DB) LastWear(disk string) (*Wear, error) {
 	return w, err
 }
 
-// AppendWear stores a wear row and returns its id.
-func (d *DB) AppendWear(w Wear) error {
+// AppendWear stores a wear row.
+func (d *DB) AppendWear(w domain.WearObservation) error {
 	_, err := d.sql.Exec(`
 		INSERT INTO wear_log
 			(disk, ts, model, serial, percentage_used, tbw_bytes,
 			 power_on_hours, media_errors, reallocated, temp_c, reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		w.Disk, w.TS, w.Model, w.Serial, w.PercentageUsed, w.TBWBytes,
-		w.PowerOnHours, w.MediaErrors, w.Reallocated, w.TempC, w.Reason)
+		w.PowerOnHours, w.MediaErrors, w.Reallocated, w.TempC,
+		domain.FormatReasons(w.Reasons))
 	return err
 }
 
 // WearLatest returns the newest wear row per disk.
-func (d *DB) WearLatest() ([]Wear, error) {
+func (d *DB) WearLatest() ([]domain.WearObservation, error) {
 	rows, err := d.sql.Query(wearSelect + `
 		WHERE id IN (SELECT MAX(id) FROM wear_log GROUP BY disk)
 		ORDER BY disk`)
@@ -307,7 +295,7 @@ func (d *DB) WearLatest() ([]Wear, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Wear
+	var out []domain.WearObservation
 	for rows.Next() {
 		w, err := scanWear(rows)
 		if err != nil {
@@ -319,7 +307,7 @@ func (d *DB) WearLatest() ([]Wear, error) {
 }
 
 // WearLog returns the newest limit wear rows across all disks.
-func (d *DB) WearLog(limit int) ([]Wear, error) {
+func (d *DB) WearLog(limit int) ([]domain.WearObservation, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -328,7 +316,7 @@ func (d *DB) WearLog(limit int) ([]Wear, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Wear
+	var out []domain.WearObservation
 	for rows.Next() {
 		w, err := scanWear(rows)
 		if err != nil {
@@ -348,11 +336,12 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanWear(s scanner) (*Wear, error) {
-	var w Wear
+func scanWear(s scanner) (*domain.WearObservation, error) {
+	var w domain.WearObservation
 	var pct, tbw, hours, media, realloc, temp sql.NullInt64
+	var reason string
 	if err := s.Scan(&w.Disk, &w.TS, &w.Model, &w.Serial, &pct, &tbw,
-		&hours, &media, &realloc, &temp, &w.Reason); err != nil {
+		&hours, &media, &realloc, &temp, &reason); err != nil {
 		return nil, err
 	}
 	w.PercentageUsed = nullInt(pct)
@@ -361,6 +350,7 @@ func scanWear(s scanner) (*Wear, error) {
 	w.MediaErrors = nullInt(media)
 	w.Reallocated = nullInt(realloc)
 	w.TempC = nullInt(temp)
+	w.Reasons = domain.ParseReasons(reason)
 	return &w, nil
 }
 

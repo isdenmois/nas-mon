@@ -1,4 +1,6 @@
-// Package app wires collectors, storage, the recorder and the HTTP server.
+// Package app is the composition root: it builds the adapters, wires them into
+// the monitor and the HTTP server, and owns the collector loops, startup and
+// shutdown.
 package app
 
 import (
@@ -14,10 +16,8 @@ import (
 
 	"mon/internal/collect"
 	"mon/internal/config"
-	"mon/internal/domain"
-	"mon/internal/recorder"
+	"mon/internal/monitor"
 	"mon/internal/server"
-	"mon/internal/state"
 	"mon/internal/store"
 )
 
@@ -26,8 +26,7 @@ type App struct {
 	cfg config.Config
 	log *slog.Logger
 	db  *store.DB
-	rec *recorder.Recorder
-	st  *state.State
+	mon *monitor.Monitor
 
 	hwmon   collect.Hwmon
 	host    *collect.Host
@@ -53,13 +52,13 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	mon := monitor.New(db, log)
 
 	a := &App{
 		cfg: cfg,
 		log: log,
 		db:  db,
-		rec: recorder.New(),
-		st:  state.New(),
+		mon: mon,
 		hwmon: collect.Hwmon{
 			Root:    "/sys/class/hwmon",
 			Include: cfg.TempInclude,
@@ -74,7 +73,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 
 	a.http = &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           server.New(a.st, db, log).Handler(),
+		Handler:           server.New(mon, log).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -155,7 +154,7 @@ func (a *App) loop(ctx context.Context, name string, interval time.Duration, fn 
 		runCtx, cancel := context.WithTimeout(ctx, timeout+15*time.Second)
 		err := fn(runCtx)
 		cancel()
-		a.st.SetCollector(name, started, err, time.Since(started))
+		a.mon.SetCollector(name, started, err, time.Since(started))
 		if err != nil {
 			msg := err.Error()
 			if msg != lastErr {
@@ -186,11 +185,7 @@ func (a *App) collectTemps(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now()
-	a.st.SetTemps(now, temps)
-	for _, t := range temps {
-		a.rec.Add(domain.Temp, t.Key, t.Celsius)
-	}
+	a.mon.IngestTemps(time.Now(), temps)
 	return nil
 }
 
@@ -200,106 +195,37 @@ func (a *App) collectHost(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.st.SetHost(now, snap)
-	a.rec.Add(domain.HostCPU, "host", snap.CPUPct)
-	a.rec.Add(domain.HostMem, "host", snap.MemPct)
-	a.rec.Add(domain.HostLoad1, "host", snap.Load1)
-	a.rec.Add(domain.HostLoad5, "host", snap.Load5)
-	a.rec.Add(domain.HostLoad15, "host", snap.Load15)
-	a.rec.Add(domain.HostNetRx, "host", snap.NetRxBps)
-	a.rec.Add(domain.HostNetTx, "host", snap.NetTxBps)
+	a.mon.IngestHost(now, snap)
 	return nil
 }
 
 func (a *App) collectDocker(ctx context.Context) error {
 	now := time.Now()
 	containers, err := a.docker.Read(ctx, now)
-	a.st.SetContainers(now, containers)
-	for _, c := range containers {
-		a.rec.Add(domain.ContainerCPU, c.Name, c.CPUPct)
-		a.rec.Add(domain.ContainerMem, c.Name, float64(c.MemUsed))
-		a.rec.Add(domain.ContainerMemPct, c.Name, c.MemPct)
-		a.rec.Add(domain.ContainerNetRx, c.Name, c.NetRxBps)
-		a.rec.Add(domain.ContainerNetTx, c.Name, c.NetTxBps)
-	}
+	a.mon.IngestContainers(now, containers)
 	return err
 }
 
 func (a *App) collectVolumes(ctx context.Context) error {
 	now := time.Now()
 	volumes, err := a.volumes.Read()
-	a.st.SetVolumes(now, volumes)
-	for _, v := range volumes {
-		a.rec.Add(domain.VolumeUsedPct, v.Name, v.UsedPct)
-	}
+	a.mon.IngestVolumes(now, volumes)
 	return err
 }
 
 func (a *App) collectSmart(ctx context.Context) error {
 	now := time.Now()
 	disks, readErr := a.smart.Read(ctx)
+	var ingestErr error
 	if disks != nil {
-		a.st.SetSmart(now, disks)
+		ingestErr = a.mon.IngestSmart(now, disks)
 	}
-	var errs []error
-	if readErr != nil {
-		errs = append(errs, readErr)
-	}
-	for _, d := range disks {
-		prev, err := a.db.LastWear(d.Disk)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("last wear %s: %w", d.Disk, err))
-			continue
-		}
-		cur := diskObservation(d, now)
-		reasons := domain.Decide(previousObservation(prev), cur, domain.TBWStep)
-		if len(reasons) == 0 {
-			continue
-		}
-		w := store.Wear{
-			Disk: cur.Disk, TS: cur.TS, Model: cur.Model, Serial: cur.Serial,
-			PercentageUsed: cur.PercentageUsed, TBWBytes: cur.TBWBytes,
-			PowerOnHours: cur.PowerOnHours, MediaErrors: cur.MediaErrors,
-			Reallocated: cur.Reallocated, TempC: cur.TempC,
-			Reason: domain.FormatReasons(reasons),
-		}
-		if err := a.db.AppendWear(w); err != nil {
-			errs = append(errs, fmt.Errorf("append wear %s: %w", d.Disk, err))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// diskObservation turns a SMART reading into the domain's wear observation.
-func diskObservation(d collect.DiskSmart, at time.Time) domain.WearObservation {
-	return domain.WearObservation{
-		Disk: d.Disk, TS: at.Unix(), Model: d.Model, Serial: d.Serial,
-		PercentageUsed: d.PercentageUsed, TBWBytes: d.TBWBytes,
-		PowerOnHours: d.PowerOnHours, MediaErrors: d.MediaErrors,
-		Reallocated: d.Reallocated, TempC: d.TempC,
-	}
-}
-
-// previousObservation turns the stored wear row into a domain observation.
-func previousObservation(prev *store.Wear) *domain.WearObservation {
-	if prev == nil {
-		return nil
-	}
-	return &domain.WearObservation{
-		Disk: prev.Disk, TS: prev.TS, Model: prev.Model, Serial: prev.Serial,
-		PercentageUsed: prev.PercentageUsed, TBWBytes: prev.TBWBytes,
-		PowerOnHours: prev.PowerOnHours, MediaErrors: prev.MediaErrors,
-		Reallocated: prev.Reallocated, TempC: prev.TempC,
-	}
+	return errors.Join(readErr, ingestErr)
 }
 
 // flush persists every fully closed minute bucket.
 func (a *App) flush(now time.Time) error {
-	points := a.rec.CollectCompleted(now)
-	if len(points) == 0 {
-		return nil
-	}
-	return a.db.InsertMinute(points)
+	return a.mon.Flush(now)
 }
 
 func (a *App) aggregateLoop(ctx context.Context) {

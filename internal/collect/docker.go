@@ -17,15 +17,15 @@ import (
 
 // ContainerSnapshot is one running container's current resource usage.
 type ContainerSnapshot struct {
-	Name     string  `json:"name"`
-	ID       string  `json:"id"`
-	Image    string  `json:"image"`
-	CPUPct   float64 `json:"cpu_pct"`
-	MemUsed  uint64  `json:"mem_used"`
-	MemLimit uint64  `json:"mem_limit"`
-	MemPct   float64 `json:"mem_pct"`
-	NetRxBps float64 `json:"net_rx_bps"`
-	NetTxBps float64 `json:"net_tx_bps"`
+	Name     string
+	ID       string
+	Image    string
+	CPUPct   float64
+	MemUsed  uint64
+	MemLimit uint64
+	MemPct   float64
+	NetRxBps float64
+	NetTxBps float64
 
 	netRx uint64
 	netTx uint64

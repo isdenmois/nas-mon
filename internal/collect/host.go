@@ -12,16 +12,16 @@ import (
 
 // HostSnapshot is the current host-level resource usage.
 type HostSnapshot struct {
-	CPUPct    float64   `json:"cpu_pct"`
-	MemUsed   uint64    `json:"mem_used"`
-	MemTotal  uint64    `json:"mem_total"`
-	MemPct    float64   `json:"mem_pct"`
-	Load1     float64   `json:"load1"`
-	Load5     float64   `json:"load5"`
-	Load15    float64   `json:"load15"`
-	NetRxBps  float64   `json:"net_rx_bps"`
-	NetTxBps  float64   `json:"net_tx_bps"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CPUPct    float64
+	MemUsed   uint64
+	MemTotal  uint64
+	MemPct    float64
+	Load1     float64
+	Load5     float64
+	Load15    float64
+	NetRxBps  float64
+	NetTxBps  float64
+	UpdatedAt time.Time
 }
 
 // Host reads CPU, memory, load and network counters from /proc. It keeps the

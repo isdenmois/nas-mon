@@ -13,33 +13,32 @@ import (
 
 	"mon/internal/api"
 	"mon/internal/domain"
-	"mon/internal/state"
-	"mon/internal/store"
 )
 
-// Store is the subset of the SQLite store used by HTTP handlers.
-type Store interface {
+// Monitor is the application layer as seen by the HTTP adapter. It is declared
+// here, next to the handler that consumes it.
+type Monitor interface {
+	Snapshot() api.Overview
 	History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
-	WearLatest() ([]store.Wear, error)
-	WearLog(limit int) ([]store.Wear, error)
+	WearLatest() ([]api.Wear, error)
+	WearLog(limit int) ([]api.Wear, error)
 }
 
 // Server holds handler dependencies.
 type Server struct {
-	state *state.State
-	store Store
-	log   *slog.Logger
-	now   func() time.Time
-	dist  fs.FS
+	mon  Monitor
+	log  *slog.Logger
+	now  func() time.Time
+	dist fs.FS
 }
 
 // New creates the HTTP server. dist is the built frontend (usually the
 // embedded directory); it may be nil in tests.
-func New(st *state.State, db Store, log *slog.Logger) *Server {
+func New(mon Monitor, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
-	s := &Server{state: st, store: db, log: log, now: time.Now}
+	s := &Server{mon: mon, log: log, now: time.Now}
 	sub, err := fs.Sub(distFS, "dist")
 	if err == nil {
 		s.dist = sub
@@ -64,7 +63,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.state.Snapshot())
+	writeJSON(w, http.StatusOK, s.mon.Snapshot())
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +102,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]api.SeriesHistory, 0, len(raw))
 	for _, kind := range order {
-		h, err := s.store.History(kind, groups[kind], window.From, window.To, window.Resolution)
+		h, err := s.mon.History(kind, groups[kind], window.From, window.To, window.Resolution)
 		if err != nil {
 			s.log.Warn("history query failed", "kind", kind, "err", err)
 			writeError(w, http.StatusInternalServerError, "history query failed")
@@ -129,13 +128,13 @@ func (s *Server) handleWear(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = v
 	}
-	latest, err := s.store.WearLatest()
+	latest, err := s.mon.WearLatest()
 	if err != nil {
 		s.log.Warn("wear latest failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "wear query failed")
 		return
 	}
-	log, err := s.store.WearLog(limit)
+	log, err := s.mon.WearLog(limit)
 	if err != nil {
 		s.log.Warn("wear log failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "wear query failed")

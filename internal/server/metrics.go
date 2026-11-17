@@ -23,7 +23,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 
 // metrics renders the current snapshot in Prometheus text exposition format.
 func (s *Server) metrics() string {
-	snap := s.state.Snapshot()
+	snap := s.mon.Snapshot()
 	m := &metricBuf{seen: map[string]bool{}}
 
 	temps := snap.Temps

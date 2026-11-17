@@ -17,16 +17,16 @@ import (
 // DiskSmart is one SSD SMART snapshot. Pointer fields are nil when the drive
 // does not report the attribute.
 type DiskSmart struct {
-	Disk           string    `json:"disk"`
-	Model          string    `json:"model"`
-	Serial         string    `json:"serial"`
-	PercentageUsed *int64    `json:"percentage_used,omitempty"`
-	TBWBytes       *int64    `json:"tbw_bytes,omitempty"`
-	PowerOnHours   *int64    `json:"power_on_hours,omitempty"`
-	MediaErrors    *int64    `json:"media_errors,omitempty"`
-	Reallocated    *int64    `json:"reallocated,omitempty"`
-	TempC          *int64    `json:"temp_c,omitempty"`
-	CollectedAt    time.Time `json:"collected_at"`
+	Disk           string
+	Model          string
+	Serial         string
+	PercentageUsed *int64
+	TBWBytes       *int64
+	PowerOnHours   *int64
+	MediaErrors    *int64
+	Reallocated    *int64
+	TempC          *int64
+	CollectedAt    time.Time
 }
 
 // Smart reads SSD SMART data with smartctl -j. The runner is injectable so the

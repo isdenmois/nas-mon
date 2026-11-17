@@ -157,6 +157,7 @@ make test    # go test ./...
 make vet
 make build   # bin/mon
 make docker  # docker compose up -d --build
+make e2e     # Playwright: UI-сценарии на замоканном API
 ```
 
 `go build` без фронтенда тоже работает: в `internal/server/dist/index.html`
@@ -165,6 +166,23 @@ make docker  # docker compose up -d --build
 ```sh
 MON_DB_PATH=./data/mon.db MON_SMART_INTERVAL=0 go run ./cmd/mon
 ```
+
+### E2E-тесты
+
+Playwright поднимает Vite dev server и перехватывает все `/api/*` запросы,
+поэтому Go-бэкенд, root и Docker не нужны. Время в браузере заморожено,
+локаль и таймзона зафиксированы, данные — из `web/e2e/fixtures.ts`.
+
+```sh
+cd web
+npx playwright install chromium   # один раз
+npm run test:e2e                  # или make e2e из корня
+npm run test:e2e:update           # перегенерировать эталоны графиков
+```
+
+Скриншоты чартов лежат в `web/e2e/__screenshots__/` и коммитятся. После
+осознанного изменения внешнего вида графиков обнови их через
+`test:e2e:update` и проверь diff картинок.
 
 ## Ограничения
 

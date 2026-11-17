@@ -1,4 +1,7 @@
-.PHONY: web build test vet run docker clean
+.PHONY: web build test vet run docker clean e2e
+
+e2e:
+	cd web && npm run test:e2e
 
 web:
 	cd web && npm ci && npm run build

@@ -13,7 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-COPY --from=web /src/internal/server/dist ./internal/server/dist
+COPY --from=web /src/internal/httpapi/dist ./internal/httpapi/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mon ./cmd/mon
 
 FROM alpine:3.22

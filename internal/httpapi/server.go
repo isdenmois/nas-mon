@@ -1,6 +1,6 @@
 // Package server exposes the dashboard API, Prometheus metrics and the
 // embedded web UI.
-package server
+package httpapi
 
 import (
 	"encoding/json"

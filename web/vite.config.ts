@@ -20,7 +20,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../internal/server/dist',
+    outDir: '../internal/httpapi/dist',
     emptyOutDir: true,
   },
 })

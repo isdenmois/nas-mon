@@ -18,7 +18,7 @@ format:
 install-hooks:
     bunx lefthook install
 
-# Install web dependencies and build into internal/server/dist
+# Install web dependencies and build into internal/httpapi/dist
 web:
     bun install --frozen-lockfile
     bun run build

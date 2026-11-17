@@ -6,7 +6,7 @@
 /test-results/
 /playwright-report/
 /blob-report/
-/internal/server/dist/*
-!/internal/server/dist/index.html
+/internal/httpapi/dist/*
+!/internal/httpapi/dist/index.html
 
 .env

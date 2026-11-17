@@ -17,7 +17,7 @@ import (
 	"mon/internal/collect"
 	"mon/internal/config"
 	"mon/internal/monitor"
-	"mon/internal/server"
+	"mon/internal/httpapi"
 	"mon/internal/store"
 )
 
@@ -73,7 +73,7 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 
 	a.http = &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           server.New(mon, log).Handler(),
+		Handler:           httpapi.New(mon, log).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

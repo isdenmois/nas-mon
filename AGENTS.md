@@ -2,7 +2,7 @@
 
 `mon` is a Linux homelab monitor: a Go backend that serves an embedded Vue 3 +
 Chart.js dashboard and Prometheus metrics. Frontend sources live in `web/`; the
-build is copied into `internal/server/dist/` and embedded with `//go:embed`.
+build is copied into `internal/httpapi/dist/` and embedded with `//go:embed`.
 
 ## Commands
 
@@ -22,22 +22,23 @@ Vitest; e2e runs on pre-push. Do not commit with hooks skipped without a reason.
 ## Build artifact gotcha
 
 `bun run build` / `just web` / `just build` rewrites the tracked stub
-`internal/server/dist/index.html`. Restore it before committing:
+`internal/httpapi/dist/index.html`. Restore it before committing:
 
 ```sh
-git checkout -- internal/server/dist/index.html
+git checkout -- internal/httpapi/dist/index.html
 ```
 
-Everything else under `internal/server/dist/` is gitignored. A plain `go build`
+Everything else under `internal/httpapi/dist/` is gitignored. A plain `go build`
 works before the first frontend build because the stub is embedded.
 
 ## Structure
 
-- Go flow: `cmd/mon` → `internal/app` (wiring/lifecycle) → `internal/collect`
-  (hwmon, host, docker, volumes, SMART) → `internal/recorder`/`internal/state`
-  → `internal/store` (SQLite). `internal/server` exposes UI, `/api/*`,
-  `/metrics`, `/healthz`. `internal/model` holds persisted metric kind names —
-  do not rename them casually.
+- Go flow: `cmd/mon` → `internal/app` (composition root) → `internal/collect`
+  (hwmon, host, docker, volumes, SMART) → `internal/monitor` (ingest, minute
+  buckets, wear policy, queries) → `internal/store` (SQLite). `internal/httpapi`
+  exposes UI, `/api/*`, `/metrics`, `/healthz`. `internal/domain` holds the
+  persisted metric kind names — do not rename them casually. `internal/api` is
+  the JSON contract.
 - Frontend uses Feature-Sliced Design: `app` → `pages` → `entities` → `shared`.
   Import only downward, and through each slice's `index.ts`. `@` maps to
   `web/src`. Do not add a `components/` dump or import across slices.

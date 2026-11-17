@@ -154,7 +154,7 @@ scrape_configs:
 ```sh
 bun install  # зависимости фронтенда и e2e
 just install-hooks  # установить git-хуки (один раз)
-just web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
+just web     # bun install + vite build -> internal/httpapi/dist (вшивается в бинарь)
 just test    # go test ./...
 just unit    # frontend unit tests (Vitest)
 just vet
@@ -164,7 +164,7 @@ just e2e     # Playwright: UI-сценарии на замоканном API
 just lint    # Biome: линт и проверка форматирования
 ```
 
-`go build` без фронтенда тоже работает: в `internal/server/dist/index.html`
+`go build` без фронтенда тоже работает: в `internal/httpapi/dist/index.html`
 лежит заглушка. Для локального запуска SMART нужен root, остальное — нет:
 
 ```sh

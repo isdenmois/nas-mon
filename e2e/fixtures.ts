@@ -1,6 +1,7 @@
 import type {
   HistoryResponse,
   Overview,
+  SeriesDescriptor,
   SeriesHistory,
   WearResponse,
 } from '../web/src/shared/api/contracts'
@@ -12,6 +13,37 @@ export const FIXED_EPOCH = Math.floor(FIXED_NOW.getTime() / 1000)
 
 const secondsAgo = (seconds: number): string =>
   new Date((FIXED_EPOCH - seconds) * 1000).toISOString()
+
+// The server assigns series ids; this registry stands in for the rows a running
+// instance would have written. Ids are fixed so chart snapshots and history
+// assertions stay stable.
+const HOST_KINDS = [
+  'host_cpu',
+  'host_mem',
+  'host_load1',
+  'host_load5',
+  'host_load15',
+  'host_net_rx',
+  'host_net_tx',
+] as const
+
+const CHARTED_CONTAINER_KINDS = ['container_cpu', 'container_net_rx', 'container_net_tx'] as const
+
+export const series: SeriesDescriptor[] = [
+  { id: 1, kind: 'temp', name: 'k10temp:Tctl' },
+  { id: 2, kind: 'temp', name: 'nvme:nvme0' },
+  { id: 3, kind: 'temp', name: 'nvme:nvme1' },
+  ...HOST_KINDS.map((kind, index) => ({ id: 10 + index, kind, name: 'host' })),
+  ...CHARTED_CONTAINER_KINDS.flatMap((kind, kindIndex) =>
+    ['mon', 'jellyfin', 'postgres'].map((name, nameIndex) => ({
+      id: 30 + kindIndex * 10 + nameIndex,
+      kind,
+      name,
+    })),
+  ),
+]
+
+const seriesByID = new Map(series.map((item) => [item.id, item]))
 
 export const overview: Overview = {
   ts: FIXED_NOW.toISOString(),
@@ -116,6 +148,7 @@ export const overview: Overview = {
     temp: { last_success: secondsAgo(10), duration_ms: 1, runs: 180 },
     volume: { last_success: secondsAgo(60), duration_ms: 2, runs: 30 },
   },
+  series,
 }
 
 export const emptyOverview: Overview = {
@@ -126,6 +159,7 @@ export const emptyOverview: Overview = {
   volumes: [],
   smart: [],
   collectors: {},
+  series: [],
 }
 
 export const wear: WearResponse = {
@@ -262,30 +296,32 @@ function valueFor(kind: string, name: string, index: number): number {
   }
 }
 
-// historyFor builds a deterministic answer for any series the UI asks for.
-export function historyFor(requested: string[], range: string): HistoryResponse {
+// historyFor builds a deterministic answer for every series id the UI asks for.
+export function historyFor(ids: number[], range: string): HistoryResponse {
   const to = FIXED_EPOCH
   const from = to - POINT_COUNT * STEP_SECONDS
 
-  const series: SeriesHistory[] = requested.map((key) => {
-    const separator = key.indexOf(':')
-    const kind = separator < 0 ? key : key.slice(0, separator)
-    const name = separator < 0 ? '' : key.slice(separator + 1)
-    return {
-      kind,
-      name,
-      points: Array.from({ length: POINT_COUNT }, (_, index) => {
-        const avg = valueFor(kind, name, index)
-        return {
-          ts: from + index * STEP_SECONDS,
-          avg,
-          min: avg * 0.9,
-          max: avg * 1.1,
-          n: 1,
-        }
-      }),
-    }
+  const histories: SeriesHistory[] = ids.flatMap((id) => {
+    const descriptor = seriesByID.get(id)
+    if (!descriptor) return []
+    return [
+      {
+        id,
+        kind: descriptor.kind,
+        name: descriptor.name,
+        points: Array.from({ length: POINT_COUNT }, (_, index) => {
+          const avg = valueFor(descriptor.kind, descriptor.name, index)
+          return {
+            ts: from + index * STEP_SECONDS,
+            avg,
+            min: avg * 0.9,
+            max: avg * 1.1,
+            n: 1,
+          }
+        }),
+      },
+    ]
   })
 
-  return { step: range === '1h' ? '1m' : '1h', from, to, series }
+  return { step: range === '1h' ? '1m' : '1h', from, to, series: histories }
 }

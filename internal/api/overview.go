@@ -79,4 +79,5 @@ type Overview struct {
 	Volumes    []VolumeSnapshot           `json:"volumes"`
 	Smart      []DiskSmart                `json:"smart"`
 	Collectors map[string]CollectorStatus `json:"collectors"`
+	Series     []SeriesDescriptor         `json:"series"`
 }

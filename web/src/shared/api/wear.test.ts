@@ -7,16 +7,16 @@ afterEach(() => {
 })
 
 describe('fetchWear', () => {
-  it('should use the default limit', async () => {
+  it('should use the default limit and the requested range', async () => {
     // Arrange
     const fetchMock = mockFetch()
     fetchMock.mockResolvedValue(jsonResponse({ latest: [], log: [] }))
 
     // Act
-    await fetchWear()
+    await fetchWear('30d')
 
     // Assert
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/wear?limit=200')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/wear?limit=200&range=30d')
   })
 
   it('should use a custom limit', async () => {
@@ -25,9 +25,9 @@ describe('fetchWear', () => {
     fetchMock.mockResolvedValue(jsonResponse({ latest: [], log: [] }))
 
     // Act
-    await fetchWear(5)
+    await fetchWear('1h', 5)
 
     // Assert
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/wear?limit=5')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/wear?limit=5&range=1h')
   })
 })

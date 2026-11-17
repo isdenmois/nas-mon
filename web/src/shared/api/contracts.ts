@@ -62,6 +62,12 @@ export interface CollectorStatus {
   runs: number
 }
 
+export interface SeriesDescriptor {
+  id: number
+  kind: string
+  name: string
+}
+
 export interface Overview {
   ts: string
   temps: TempReading[]
@@ -70,6 +76,7 @@ export interface Overview {
   volumes: VolumeSnapshot[]
   smart: DiskSmart[]
   collectors: Record<string, CollectorStatus>
+  series: SeriesDescriptor[]
 }
 
 export interface SeriesPoint {
@@ -81,6 +88,7 @@ export interface SeriesPoint {
 }
 
 export interface SeriesHistory {
+  id: number
   kind: string
   name: string
   points: SeriesPoint[]

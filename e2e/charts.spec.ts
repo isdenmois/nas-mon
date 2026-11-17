@@ -10,10 +10,11 @@ const containerPanel = (page: Page): Locator =>
 const smartPanel = (page: Page): Locator =>
   page.locator('section[aria-labelledby="smart-history-title"]')
 
-async function lastTempSeries(calls: Awaited<ReturnType<typeof mockApi>>): Promise<string[]> {
+const TEMP_IDS = [1, 2, 3]
+
+async function lastTempIDs(calls: Awaited<ReturnType<typeof mockApi>>): Promise<number[]> {
   return (
-    calls.history.filter((call) => call.series.some((item) => item.startsWith('temp:'))).at(-1)
-      ?.series ?? []
+    calls.history.filter((call) => call.ids.some((id) => TEMP_IDS.includes(id))).at(-1)?.ids ?? []
   )
 }
 
@@ -41,7 +42,7 @@ test('deep link renders every history panel from the API', async ({ page }) => {
   await expect(containerPanel(page).locator('canvas')).toHaveCount(3)
 
   expect(calls.wear).toBeGreaterThan(0)
-  expect(calls.history.some((call) => call.series.includes('container_cpu:jellyfin'))).toBe(true)
+  expect(calls.history.some((call) => call.ids.includes(31))).toBe(true)
 })
 
 test('switching the range refetches the chart', async ({ page }) => {
@@ -49,7 +50,7 @@ test('switching the range refetches the chart', async ({ page }) => {
   await page.goto('/charts')
 
   await expect
-    .poll(() => calls.history.some((call) => call.range === '24h' && call.series.length > 0))
+    .poll(() => calls.history.some((call) => call.range === '24h' && call.ids.length > 0))
     .toBe(true)
 
   const button = page.getByRole('button', { name: 'Show 7d of temperature history' })
@@ -57,7 +58,7 @@ test('switching the range refetches the chart', async ({ page }) => {
 
   await expect(button).toHaveAttribute('aria-pressed', 'true')
   await expect
-    .poll(() => calls.history.some((call) => call.range === '7d' && call.series.length > 0))
+    .poll(() => calls.history.some((call) => call.range === '7d' && call.ids.length > 0))
     .toBe(true)
   await expect(tempPanel(page).locator('canvas')).toBeVisible()
 })
@@ -68,7 +69,7 @@ test('temperature checkboxes choose which series are charted', async ({ page }) 
 
   const sensors = tempPanel(page).getByRole('checkbox')
   await expect(sensors).toHaveCount(3)
-  await expect.poll(async () => (await lastTempSeries(calls)).length).toBe(3)
+  await expect.poll(async () => (await lastTempIDs(calls)).length).toBe(3)
 
   await sensors.nth(0).uncheck()
   await sensors.nth(1).uncheck()
@@ -78,7 +79,7 @@ test('temperature checkboxes choose which series are charted', async ({ page }) 
   await expect(tempPanel(page).locator('canvas')).toBeHidden()
 
   await sensors.nth(0).check()
-  await expect.poll(async () => lastTempSeries(calls)).toEqual(['temp:k10temp:Tctl'])
+  await expect.poll(async () => lastTempIDs(calls)).toEqual([1])
   await expect(tempPanel(page).locator('canvas')).toHaveAttribute(
     'aria-label',
     'History chart for k10temp · Tctl',
@@ -96,11 +97,7 @@ test('container picker limits the charted series', async ({ page }) => {
 
   await containerPanel(page).getByRole('checkbox', { name: 'jellyfin' }).check()
   await expect
-    .poll(() =>
-      calls.history.some(
-        (call) => call.series.length === 1 && call.series[0] === 'container_cpu:jellyfin',
-      ),
-    )
+    .poll(() => calls.history.some((call) => call.ids.length === 1 && call.ids[0] === 31))
     .toBe(true)
   await expect(containerPanel(page).locator('canvas')).toHaveCount(3)
   await expect(containerPanel(page).locator('canvas').first()).toBeVisible()

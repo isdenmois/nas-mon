@@ -4,7 +4,7 @@ import { FIXED_NOW, historyFor, overview, wear } from './fixtures'
 
 export interface ApiOptions {
   overview?: Overview
-  history?: HistoryResponse | ((series: string[], range: string) => HistoryResponse)
+  history?: HistoryResponse | ((ids: number[], range: string) => HistoryResponse)
   wear?: WearResponse
   overviewError?: number | string
   historyError?: number | string
@@ -13,7 +13,7 @@ export interface ApiOptions {
 
 export interface ApiCalls {
   overview: number
-  history: { range: string; series: string[] }[]
+  history: { range: string; ids: number[] }[]
   wear: number
 }
 
@@ -35,13 +35,13 @@ export async function mockApi(page: Page, options: ApiOptions = {}): Promise<Api
 
       if (url.pathname === '/api/history') {
         const range = url.searchParams.get('range') ?? '24h'
-        const series = url.searchParams.getAll('series')
-        calls.history.push({ range, series })
+        const ids = url.searchParams.getAll('id').map(Number)
+        calls.history.push({ range, ids })
         let data: HistoryResponse
         if (typeof options.history === 'function') {
-          data = options.history(series, range)
+          data = options.history(ids, range)
         } else {
-          data = options.history ?? historyFor(series, range)
+          data = options.history ?? historyFor(ids, range)
         }
         await fulfill(route, options.historyError, data)
         return

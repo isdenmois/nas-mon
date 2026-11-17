@@ -33,7 +33,7 @@ let controller: AbortController | null = null
 let requestId = 0
 let timer: ReturnType<typeof setInterval> | undefined
 
-const seriesKey = computed(() => props.series.map((item) => `${item.kind}:${item.name}`).join('|'))
+const seriesKey = computed(() => props.series.map((item) => item.id).join(','))
 
 async function load(): Promise<void> {
   if (props.series.length === 0) {
@@ -53,14 +53,14 @@ async function load(): Promise<void> {
   try {
     const data = await fetchHistory(
       props.range,
-      props.series.map((item) => `${item.kind}:${item.name}`),
+      props.series.map((item) => item.id),
       ctrl.signal,
     )
     if (id !== requestId) return
-    const byKey = new Map(data.series.map((item) => [`${item.kind}:${item.name}`, item]))
+    const byID = new Map(data.series.map((item) => [item.id, item]))
     datasets.value = props.series
       .map((spec) => {
-        const found = byKey.get(`${spec.kind}:${spec.name}`)
+        const found = byID.get(spec.id)
         return {
           label: spec.label,
           color: spec.color,

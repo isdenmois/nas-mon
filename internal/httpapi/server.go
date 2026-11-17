@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -13,15 +14,17 @@ import (
 
 	"mon/internal/api"
 	"mon/internal/domain"
+	"mon/internal/monitor"
 )
 
 // Monitor is the application layer as seen by the HTTP adapter. It is declared
 // here, next to the handler that consumes it.
 type Monitor interface {
 	Snapshot() api.Overview
-	History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
+	Overview() (api.Overview, error)
+	History(ids []int64, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
 	WearLatest() ([]api.Wear, error)
-	WearLog(limit int) ([]api.Wear, error)
+	WearLog(limit int, since int64) ([]api.Wear, error)
 }
 
 // Server holds handler dependencies.
@@ -63,29 +66,30 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.mon.Snapshot())
+	overview, err := s.mon.Overview()
+	if err != nil {
+		s.log.Warn("overview query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "overview query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	raw := r.URL.Query()["series"]
+	raw := r.URL.Query()["id"]
 	if len(raw) == 0 {
-		writeError(w, http.StatusBadRequest, "missing series parameter")
+		writeError(w, http.StatusBadRequest, "missing id parameter")
 		return
 	}
-	groups := map[domain.Kind][]string{}
-	var order []domain.Kind
+	ids := make([]int64, 0, len(raw))
 	for _, item := range raw {
 		for _, part := range strings.Split(item, ",") {
-			kindRaw, name, ok := strings.Cut(strings.TrimSpace(part), ":")
-			if !ok || kindRaw == "" || name == "" {
-				writeError(w, http.StatusBadRequest, "series must look like kind:name")
+			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if err != nil || id < 1 {
+				writeError(w, http.StatusBadRequest, "id must be a positive integer")
 				return
 			}
-			kind := domain.Kind(kindRaw)
-			if _, seen := groups[kind]; !seen {
-				order = append(order, kind)
-			}
-			groups[kind] = append(groups[kind], name)
+			ids = append(ids, id)
 		}
 	}
 
@@ -100,15 +104,18 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]api.SeriesHistory, 0, len(raw))
-	for _, kind := range order {
-		h, err := s.mon.History(kind, groups[kind], window.From, window.To, window.Resolution)
-		if err != nil {
-			s.log.Warn("history query failed", "kind", kind, "err", err)
-			writeError(w, http.StatusInternalServerError, "history query failed")
-			return
-		}
-		out = append(out, h...)
+	out, err := s.mon.History(ids, window.From, window.To, window.Resolution)
+	if errors.Is(err, monitor.ErrUnknownSeries) {
+		writeError(w, http.StatusNotFound, "unknown series id")
+		return
+	}
+	if err != nil {
+		s.log.Warn("history query failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "history query failed")
+		return
+	}
+	if out == nil {
+		out = []api.SeriesHistory{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"step":   api.Step(window.Resolution.String()),
@@ -128,13 +135,27 @@ func (s *Server) handleWear(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = v
 	}
+	since := int64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("range")); raw != "" {
+		key, err := domain.ParseRange(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		window, err := key.Resolve(s.now().Unix())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		since = window.From
+	}
 	latest, err := s.mon.WearLatest()
 	if err != nil {
 		s.log.Warn("wear latest failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "wear query failed")
 		return
 	}
-	log, err := s.mon.WearLog(limit)
+	log, err := s.mon.WearLog(limit, since)
 	if err != nil {
 		s.log.Warn("wear log failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "wear query failed")

@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { RangeKey } from '@/shared/config'
+import type { SeriesIndex } from '@/shared/lib'
 import { HistoryChart, RangePicker } from '@/shared/ui'
 import { cpuSeries, loadSeries, netSeries, ramSeries } from '../model/host'
 
+const props = defineProps<{ seriesIndex: SeriesIndex }>()
 const emit = defineEmits<{ error: [message: string] }>()
 
 const range = ref<RangeKey>('24h')
+const cpuData = computed(() => props.seriesIndex.resolve(cpuSeries))
+const ramData = computed(() => props.seriesIndex.resolve(ramSeries))
+const loadData = computed(() => props.seriesIndex.resolve(loadSeries))
+const netData = computed(() => props.seriesIndex.resolve(netSeries))
 </script>
 
 <template>
@@ -20,7 +26,7 @@ const range = ref<RangeKey>('24h')
       <article class="chart-card">
         <h3>CPU</h3>
         <HistoryChart
-          :series="cpuSeries"
+          :series="cpuData"
           :range="range"
           format="percent"
           height="180px"
@@ -31,7 +37,7 @@ const range = ref<RangeKey>('24h')
       <article class="chart-card">
         <h3>RAM</h3>
         <HistoryChart
-          :series="ramSeries"
+          :series="ramData"
           :range="range"
           format="percent"
           height="180px"
@@ -42,7 +48,7 @@ const range = ref<RangeKey>('24h')
       <article class="chart-card">
         <h3>Load average</h3>
         <HistoryChart
-          :series="loadSeries"
+          :series="loadData"
           :range="range"
           format="number"
           height="180px"
@@ -53,7 +59,7 @@ const range = ref<RangeKey>('24h')
       <article class="chart-card">
         <h3>Network</h3>
         <HistoryChart
-          :series="netSeries"
+          :series="netData"
           :range="range"
           format="rate"
           height="180px"

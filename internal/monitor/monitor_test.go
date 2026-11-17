@@ -13,14 +13,16 @@ import (
 )
 
 type fakeStore struct {
-	inserted [][]domain.Point
-	history  []api.SeriesHistory
-	histKind domain.Kind
-	histRes  domain.Resolution
-	wear     []domain.WearObservation
-	appended []domain.WearObservation
-	last     map[string]*domain.WearObservation
-	err      error
+	inserted  [][]domain.Point
+	series    []domain.Series
+	history   []api.SeriesHistory
+	histIDs   []int64
+	histRes   domain.Resolution
+	wear      []domain.WearObservation
+	wearSince int64
+	appended  []domain.WearObservation
+	last      map[string]*domain.WearObservation
+	err       error
 }
 
 func (f *fakeStore) InsertMinute(p []domain.Point) error {
@@ -28,8 +30,22 @@ func (f *fakeStore) InsertMinute(p []domain.Point) error {
 	return f.err
 }
 
-func (f *fakeStore) History(kind domain.Kind, _ []string, _, _ int64, res domain.Resolution) ([]api.SeriesHistory, error) {
-	f.histKind, f.histRes = kind, res
+func (f *fakeStore) ListSeries() ([]domain.Series, error) { return f.series, f.err }
+
+func (f *fakeStore) Series(ids []int64) ([]domain.Series, error) {
+	var out []domain.Series
+	for _, id := range ids {
+		for _, s := range f.series {
+			if s.ID == id {
+				out = append(out, s)
+			}
+		}
+	}
+	return out, f.err
+}
+
+func (f *fakeStore) History(ids []int64, _, _ int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+	f.histIDs, f.histRes = ids, res
 	return f.history, f.err
 }
 
@@ -44,7 +60,10 @@ func (f *fakeStore) AppendWear(w domain.WearObservation) error {
 
 func (f *fakeStore) WearLatest() ([]domain.WearObservation, error) { return f.wear, f.err }
 
-func (f *fakeStore) WearLog(int) ([]domain.WearObservation, error) { return f.wear, f.err }
+func (f *fakeStore) WearLog(_ int, since int64) ([]domain.WearObservation, error) {
+	f.wearSince = since
+	return f.wear, f.err
+}
 
 func newMonitor(t *testing.T, st Store) *Monitor {
 	t.Helper()
@@ -178,7 +197,7 @@ func TestWearRowsUseTheWireContract(t *testing.T) {
 		PercentageUsed: &pct,
 	}}}
 	m := newMonitor(t, st)
-	rows, err := m.WearLog(10)
+	rows, err := m.WearLog(10, 1234)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,14 +206,40 @@ func TestWearRowsUseTheWireContract(t *testing.T) {
 	}
 }
 
-func TestHistoryPassesKindAndResolution(t *testing.T) {
-	st := &fakeStore{history: []api.SeriesHistory{{Kind: "temp", Name: "a"}}}
+func TestHistoryResolvesSeriesIDs(t *testing.T) {
+	st := &fakeStore{
+		series:  []domain.Series{{ID: 7, Kind: domain.Temp, Name: "a"}},
+		history: []api.SeriesHistory{{ID: 7, Kind: "temp", Name: "a"}},
+	}
 	m := newMonitor(t, st)
-	got, err := m.History(domain.Temp, []string{"a"}, 0, 60, domain.Hour)
+	got, err := m.History([]int64{7, 7}, 0, 60, domain.Hour)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("history = %+v, %v", got, err)
 	}
-	if st.histKind != domain.Temp || st.histRes != domain.Hour {
-		t.Errorf("port called with %v %v", st.histKind, st.histRes)
+	if len(st.histIDs) != 1 || st.histIDs[0] != 7 || st.histRes != domain.Hour {
+		t.Errorf("port called with %v %v", st.histIDs, st.histRes)
+	}
+}
+
+func TestHistoryRejectsUnknownSeries(t *testing.T) {
+	m := newMonitor(t, &fakeStore{series: []domain.Series{{ID: 7}}})
+	if _, err := m.History([]int64{7, 99}, 0, 60, domain.Hour); !errors.Is(err, ErrUnknownSeries) {
+		t.Errorf("err = %v, want ErrUnknownSeries", err)
+	}
+}
+
+func TestOverviewIncludesSeriesRegistry(t *testing.T) {
+	st := &fakeStore{series: []domain.Series{{ID: 3, Kind: domain.HostCPU, Name: "host"}}}
+	m := newMonitor(t, st)
+	ov, err := m.Overview()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ov.Series) != 1 || ov.Series[0].ID != 3 ||
+		ov.Series[0].Kind != "host_cpu" || ov.Series[0].Name != "host" {
+		t.Errorf("registry = %+v", ov.Series)
+	}
+	if ov.Series == nil {
+		t.Error("registry is nil; JSON would emit null")
 	}
 }

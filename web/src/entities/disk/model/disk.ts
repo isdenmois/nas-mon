@@ -1,8 +1,10 @@
 import type { DiskSmart, Wear } from '@/shared/api'
-import type { RangeKey } from '@/shared/config'
-import { chartColor, rangeSeconds, type ChartSeries } from '@/shared/lib'
+import { chartColor, type ChartSeries } from '@/shared/lib'
 
-export const WEAR_LOG_LIMIT = 200
+// Rows shown in the wear-log table. The fetch asks for more so the TBW chart
+// still has history behind the visible window; the server bounds both by range.
+export const WEAR_LOG_ROWS = 200
+export const WEAR_LOG_FETCH_LIMIT = 20_000
 
 export function groupWearByDisk(log: Wear[]): Map<string, Wear[]> {
   const byDisk = new Map<string, Wear[]>()
@@ -23,18 +25,15 @@ export function wearDiskNames(smart: DiskSmart[], grouped: Map<string, Wear[]>):
 export function wearLogFor(
   grouped: Map<string, Wear[]>,
   disk: string,
-  limit = WEAR_LOG_LIMIT,
+  limit = WEAR_LOG_ROWS,
 ): Wear[] {
   return (grouped.get(disk) ?? []).slice(0, limit)
 }
 
-export function tbwSeries(log: Wear[], range: RangeKey, nowSeconds: number): ChartSeries[] {
-  const window = rangeSeconds(range)
-  const since = window == null ? null : nowSeconds - window
+export function tbwSeries(log: Wear[]): ChartSeries[] {
   const byDisk = new Map<string, Map<number, number>>()
   for (const entry of log) {
     if (entry.tbw_bytes == null) continue
-    if (since != null && entry.ts < since) continue
     let points = byDisk.get(entry.disk)
     if (!points) {
       points = new Map()

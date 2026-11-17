@@ -2,22 +2,23 @@
 import { computed, ref } from 'vue'
 import type { TempReading } from '@/shared/api'
 import type { RangeKey } from '@/shared/config'
-import { useAutoSelection, type HistorySeries } from '@/shared/lib'
+import { useAutoSelection, type SeriesIndex, type SeriesSpec } from '@/shared/lib'
 import { HistoryChart, RangePicker } from '@/shared/ui'
 import { temperatureLabel } from '../model/temperature'
 
-const props = defineProps<{ temps: TempReading[] }>()
+const props = defineProps<{ temps: TempReading[]; seriesIndex: SeriesIndex }>()
 const emit = defineEmits<{ error: [message: string] }>()
 
 const range = ref<RangeKey>('24h')
 const selected = useAutoSelection(() => props.temps.map((sensor) => sensor.key))
 
-const chartSeries = computed<HistorySeries[]>(() => {
+const chartSeries = computed(() => {
   const byKey = new Map(props.temps.map((sensor) => [sensor.key, sensor]))
-  return selected.value.map((key) => {
+  const specs: SeriesSpec[] = selected.value.map((key) => {
     const sensor = byKey.get(key)
     return { kind: 'temp', name: key, label: sensor ? temperatureLabel(sensor) : key }
   })
+  return props.seriesIndex.resolve(specs)
 })
 </script>
 

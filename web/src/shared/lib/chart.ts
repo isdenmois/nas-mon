@@ -10,11 +10,24 @@ export interface ChartSeries {
   dashed?: boolean
 }
 
-export interface HistorySeries {
+// SeriesSpec names a series the way the API does; SeriesIndex turns it into the
+// server-assigned id that history queries use.
+export interface SeriesSpec {
   kind: string
   name: string
   label: string
   color?: string
+}
+
+export interface HistorySeries {
+  id: number
+  label: string
+  color?: string
+}
+
+export interface SeriesIndex {
+  id(kind: string, name: string): number | undefined
+  resolve(specs: SeriesSpec[]): HistorySeries[]
 }
 
 export const CHART_PALETTE = [

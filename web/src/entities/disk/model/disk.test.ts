@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DiskSmart, Wear } from '@/shared/api'
-import { groupWearByDisk, tbwSeries, wearDiskNames, wearLogFor } from './disk'
+import { groupWearByDisk, tbwSeries, wearDiskNames, wearLogFor, WEAR_LOG_ROWS } from './disk'
 
 function entry(overrides: Partial<Wear> = {}): Wear {
   return { disk: 'nvme0', tbw_bytes: 1024, ts: 100, ...overrides }
@@ -50,6 +50,19 @@ describe('wearDiskNames', () => {
 })
 
 describe('wearLogFor', () => {
+  it('should default to the visible row count', () => {
+    // Arrange
+    const log = Array.from({ length: WEAR_LOG_ROWS + 5 }, (_, index) =>
+      entry({ ts: WEAR_LOG_ROWS + 5 - index }),
+    )
+
+    // Act
+    const rows = wearLogFor(groupWearByDisk(log), 'nvme0')
+
+    // Assert
+    expect(rows).toHaveLength(WEAR_LOG_ROWS)
+  })
+
   it('should return the newest entries of a disk capped by the limit', () => {
     // Arrange
     const grouped = groupWearByDisk([entry({ ts: 3 }), entry({ ts: 2 }), entry({ ts: 1 })])
@@ -85,26 +98,11 @@ describe('tbwSeries', () => {
     ]
 
     // Act
-    const series = tbwSeries(log, 'all', now)
+    const series = tbwSeries(log)
 
     // Assert
     expect(series.map((item) => item.label)).toEqual(['nvme0', 'nvme1'])
     expect(series[0].points.map((point) => point.value)).toEqual([5, 10])
-  })
-
-  it('should drop points outside a short range', () => {
-    // Arrange
-    const now = 100 * HOUR
-    const log = [
-      entry({ ts: now - 2 * HOUR, tbw_bytes: 10 }),
-      entry({ ts: now - 30 * 60, tbw_bytes: 20 }),
-    ]
-
-    // Act
-    const series = tbwSeries(log, '1h', now)
-
-    // Assert
-    expect(series[0].points.map((point) => point.value)).toEqual([20])
   })
 
   it('should keep the newest value when two samples share a timestamp', () => {
@@ -113,7 +111,7 @@ describe('tbwSeries', () => {
     const log = [entry({ ts: now - HOUR, tbw_bytes: 10 }), entry({ ts: now - HOUR, tbw_bytes: 30 })]
 
     // Act
-    const series = tbwSeries(log, 'all', now)
+    const series = tbwSeries(log)
 
     // Assert
     expect(series[0].points).toEqual([{ ts: now - HOUR, value: 30 }])

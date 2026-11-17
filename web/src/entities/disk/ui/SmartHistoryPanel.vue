@@ -13,7 +13,8 @@ import { RangePicker, SeriesChart } from '@/shared/ui'
 import {
   groupWearByDisk,
   tbwSeries,
-  WEAR_LOG_LIMIT,
+  WEAR_LOG_FETCH_LIMIT,
+  WEAR_LOG_ROWS,
   wearDiskNames,
   wearLogFor,
 } from '../model/disk'
@@ -34,7 +35,7 @@ let timer: ReturnType<typeof setInterval> | undefined
 const grouped = computed(() => groupWearByDisk(wear.value?.log ?? []))
 const logDisks = computed(() => wearDiskNames(props.smart, grouped.value))
 const selectedLog = computed(() => wearLogFor(grouped.value, logDisk.value))
-const tbwDatasets = computed(() => tbwSeries(wear.value?.log ?? [], range.value, Date.now() / 1000))
+const tbwDatasets = computed(() => tbwSeries(wear.value?.log ?? []))
 const tbwEmptyText = computed(() =>
   loading.value && !wear.value ? 'Loading write history…' : 'No TBW history yet',
 )
@@ -55,7 +56,7 @@ async function loadWear(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchWear(20000, ctrl.signal)
+    const data = await fetchWear(range.value, WEAR_LOG_FETCH_LIMIT, ctrl.signal)
     if (id !== requestId) return
     wear.value = data
   } catch (err) {
@@ -66,6 +67,10 @@ async function loadWear(): Promise<void> {
     if (id === requestId) loading.value = false
   }
 }
+
+watch(range, () => {
+  void loadWear()
+})
 
 onMounted(() => {
   void loadWear()
@@ -157,7 +162,9 @@ onBeforeUnmount(() => {
         </table>
       </div>
       <p v-else class="muted">No wear log entries yet.</p>
-      <p v-if="selectedLog.length >= WEAR_LOG_LIMIT" class="muted">Showing the latest 200 entries.</p>
+      <p v-if="selectedLog.length >= WEAR_LOG_ROWS" class="muted">
+        Showing the latest {{ WEAR_LOG_ROWS }} entries.
+      </p>
       <p class="muted log-note">
         Logged only on significant changes: new errors, more wear, or at least 100 GB of new
         writes. Power-on hours and temperature alone do not create a row.

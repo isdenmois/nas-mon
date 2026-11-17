@@ -21,9 +21,18 @@ type SeriesPoint struct {
 	N   int64   `json:"n"`
 }
 
-// SeriesHistory is the history of one series.
+// SeriesHistory is the history of one series. Kind and name are informational:
+// clients address history by ID.
 type SeriesHistory struct {
+	ID     int64         `json:"id"`
 	Kind   string        `json:"kind"`
 	Name   string        `json:"name"`
 	Points []SeriesPoint `json:"points"`
+}
+
+// SeriesDescriptor identifies a series that has been recorded at least once.
+type SeriesDescriptor struct {
+	ID   int64  `json:"id"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }

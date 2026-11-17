@@ -7,18 +7,18 @@ afterEach(() => {
 })
 
 describe('fetchHistory', () => {
-  it('should encode the range and every requested series', async () => {
+  it('should encode the range and every requested series id', async () => {
     // Arrange
     const payload = { step: '1h', from: 1, to: 2, series: [] }
     const fetchMock = mockFetch()
     fetchMock.mockResolvedValue(jsonResponse(payload))
 
     // Act
-    await fetchHistory('7d', ['temp:a', 'host_cpu'])
+    await fetchHistory('7d', [3, 9])
 
     // Assert
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/history?range=7d&series=temp%3Aa&series=host_cpu',
+      '/api/history?range=7d&id=3&id=9',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),
     )
   })

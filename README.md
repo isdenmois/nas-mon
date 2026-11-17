@@ -130,14 +130,17 @@ heartbeat-а нет. График TBW строится по этому логу,
 | Endpoint | Назначение |
 |---|---|
 | `GET /api/overview` | текущий снимок: температуры, хост, контейнеры, ФС, SMART, здоровье сборщиков |
-| `GET /api/history?range=24h&series=temp:k10temp:Tctl` | агрегаты; `range`: `1h 6h 24h 48h 7d 30d 90d 1y all` |
-| `GET /api/wear?limit=200` | последний SMART по каждому диску + лог износа (`limit` до 20000) |
+| `GET /api/history?range=24h&id=12` | агрегаты; `range`: `1h 6h 24h 48h 7d 30d 90d 1y all`; `id` можно повторять |
+| `GET /api/wear?limit=200&range=30d` | последний SMART по каждому диску + лог износа (`limit` до 20000, `range` необязателен) |
 | `GET /metrics` | Prometheus text exposition |
 | `GET /healthz` | `{"ok":true}` |
 
-`series` можно повторять. Доступные kind: `temp`, `host_cpu`, `host_mem`,
-`host_load1/5/15`, `host_net_rx/tx`, `container_cpu`, `container_mem`,
-`container_mem_pct`, `container_net_rx/tx`, `volume_used_pct`.
+Идентификаторы серий выдаёт сервер: `/api/overview` возвращает массив `series`
+(`{id, kind, name}`) для всего, что уже записано, и по этим `id` запрашивается
+история. Строка `kind:name` по проводу больше не ходит, поэтому имена с
+двоеточиями (`nvme:nvme0:Composite`) не ломают разбор. Доступные kind: `temp`,
+`host_cpu`, `host_mem`, `host_load1/5/15`, `host_net_rx/tx`, `container_cpu`,
+`container_mem`, `container_mem_pct`, `container_net_rx/tx`, `volume_used_pct`.
 
 Пример scrape-конфига:
 

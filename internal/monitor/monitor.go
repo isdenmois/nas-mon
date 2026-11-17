@@ -5,6 +5,7 @@
 package monitor
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,14 +15,20 @@ import (
 	"mon/internal/recorder"
 )
 
+// ErrUnknownSeries is returned when history was asked for an id that has never
+// been recorded.
+var ErrUnknownSeries = errors.New("unknown series")
+
 // Store is the persistence port the monitor needs.
 type Store interface {
 	InsertMinute(points []domain.Point) error
-	History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
+	ListSeries() ([]domain.Series, error)
+	Series(ids []int64) ([]domain.Series, error)
+	History(ids []int64, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
 	LastWear(disk string) (*domain.WearObservation, error)
 	AppendWear(row domain.WearObservation) error
 	WearLatest() ([]domain.WearObservation, error)
-	WearLog(limit int) ([]domain.WearObservation, error)
+	WearLog(limit int, since int64) ([]domain.WearObservation, error)
 }
 
 // Monitor is safe for concurrent use by collector loops and HTTP handlers.
@@ -98,9 +105,43 @@ func (m *Monitor) Flush(now time.Time) error {
 	return m.store.InsertMinute(points)
 }
 
-// History returns the aggregated points of the requested series names.
-func (m *Monitor) History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
-	return m.store.History(kind, names, from, to, res)
+// Overview returns the read model together with the series registry the
+// dashboard needs to ask for history by id.
+func (m *Monitor) Overview() (api.Overview, error) {
+	snap := m.Snapshot()
+	series, err := m.store.ListSeries()
+	if err != nil {
+		return snap, err
+	}
+	snap.Series = make([]api.SeriesDescriptor, 0, len(series))
+	for _, s := range series {
+		snap.Series = append(snap.Series, api.SeriesDescriptor{
+			ID: s.ID, Kind: string(s.Kind), Name: s.Name,
+		})
+	}
+	return snap, nil
+}
+
+// History returns the aggregated points of the requested series ids. Asking for
+// an id that was never recorded is an error, so a typo cannot look like "no data
+// yet".
+func (m *Monitor) History(ids []int64, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+	unique := make([]int64, 0, len(ids))
+	seen := map[int64]bool{}
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+	known, err := m.store.Series(unique)
+	if err != nil {
+		return nil, err
+	}
+	if len(known) != len(unique) {
+		return nil, ErrUnknownSeries
+	}
+	return m.store.History(unique, from, to, res)
 }
 
 // WearLatest returns the newest wear row per disk.
@@ -112,9 +153,10 @@ func (m *Monitor) WearLatest() ([]api.Wear, error) {
 	return wearRows(rows), nil
 }
 
-// WearLog returns the newest limit wear rows across all disks.
-func (m *Monitor) WearLog(limit int) ([]api.Wear, error) {
-	rows, err := m.store.WearLog(limit)
+// WearLog returns the newest limit wear rows no older than since (unix
+// seconds; zero means no lower bound).
+func (m *Monitor) WearLog(limit int, since int64) ([]api.Wear, error) {
+	rows, err := m.store.WearLog(limit, since)
 	if err != nil {
 		return nil, err
 	}

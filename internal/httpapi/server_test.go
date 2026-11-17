@@ -12,34 +12,41 @@ import (
 
 	"mon/internal/api"
 	"mon/internal/domain"
+	"mon/internal/monitor"
 )
 
 type historyCall struct {
-	kind  domain.Kind
-	names []string
-	from  int64
-	to    int64
-	step  domain.Resolution
+	ids  []int64
+	from int64
+	to   int64
+	step domain.Resolution
 }
 
 type fakeMonitor struct {
 	overview  api.Overview
-	histories map[domain.Kind][]api.SeriesHistory
+	histories []api.SeriesHistory
 	latest    []api.Wear
 	log       []api.Wear
 	calls     []historyCall
+	wearSince int64
 	err       error
 }
 
 func (f *fakeMonitor) Snapshot() api.Overview { return f.overview }
 
-func (f *fakeMonitor) History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
-	f.calls = append(f.calls, historyCall{kind, names, from, to, res})
-	return f.histories[kind], f.err
+func (f *fakeMonitor) Overview() (api.Overview, error) { return f.overview, f.err }
+
+func (f *fakeMonitor) History(ids []int64, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+	f.calls = append(f.calls, historyCall{ids, from, to, res})
+	return f.histories, f.err
 }
 
 func (f *fakeMonitor) WearLatest() ([]api.Wear, error) { return f.latest, f.err }
-func (f *fakeMonitor) WearLog(int) ([]api.Wear, error) { return f.log, f.err }
+
+func (f *fakeMonitor) WearLog(_ int, since int64) ([]api.Wear, error) {
+	f.wearSince = since
+	return f.log, f.err
+}
 
 func testServer(t *testing.T, mon Monitor) (*Server, http.Handler) {
 	t.Helper()
@@ -79,6 +86,7 @@ func TestOverview(t *testing.T) {
 		Volumes:    []api.VolumeSnapshot{{Name: "/", UsedPct: 42}},
 		Smart:      []api.DiskSmart{{Disk: "nvme0n1", Model: "Samsung"}},
 		Collectors: map[string]api.CollectorStatus{"temp": {LastSuccess: at, Runs: 1}},
+		Series:     []api.SeriesDescriptor{{ID: 3, Kind: "host_cpu", Name: "host"}},
 	}}
 
 	_, h := testServer(t, mon)
@@ -99,44 +107,52 @@ func TestOverview(t *testing.T) {
 	if got.Collectors["temp"].LastSuccess.IsZero() {
 		t.Errorf("collector = %+v", got.Collectors)
 	}
+	if len(got.Series) != 1 || got.Series[0].ID != 3 {
+		t.Errorf("series registry = %+v", got.Series)
+	}
 }
 
 func TestHistoryRangeAndGrouping(t *testing.T) {
 	now := time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC)
-	mon := &fakeMonitor{histories: map[domain.Kind][]api.SeriesHistory{
-		domain.Temp:    {{Kind: "temp", Name: "a", Points: []api.SeriesPoint{{TS: 1, Avg: 40}}}},
-		domain.HostCPU: {{Kind: "host_cpu", Name: "host"}},
+	mon := &fakeMonitor{histories: []api.SeriesHistory{
+		{ID: 7, Kind: "temp", Name: "a", Points: []api.SeriesPoint{{TS: 1, Avg: 40}}},
+		{ID: 9, Kind: "host_cpu", Name: "host"},
 	}}
 	s, h := testServer(t, mon)
 	s.now = func() time.Time { return now }
 
-	rec := get(h, "/api/history?range=7d&series=temp:a&series=temp:b&series=host_cpu:host")
+	rec := get(h, "/api/history?range=7d&id=7&id=8&id=9")
 	if rec.Code != 200 {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
 	}
-	if len(mon.calls) != 2 {
+	if len(mon.calls) != 1 {
 		t.Fatalf("calls = %+v", mon.calls)
 	}
-	tempCall := mon.calls[0]
-	if tempCall.kind != domain.Temp || strings.Join(tempCall.names, ",") != "a,b" ||
-		tempCall.step != domain.Hour {
-		t.Errorf("temp call = %+v", tempCall)
+	call := mon.calls[0]
+	if len(call.ids) != 3 || call.ids[0] != 7 || call.ids[2] != 9 || call.step != domain.Hour {
+		t.Errorf("call = %+v", call)
 	}
 	wantFrom := now.Add(-7 * 24 * time.Hour).Unix()
 	wantFrom -= wantFrom % 3600
-	if tempCall.from != wantFrom || tempCall.to != now.Unix() {
-		t.Errorf("window = %d..%d, want %d..%d", tempCall.from, tempCall.to, wantFrom, now.Unix())
-	}
-	if mon.calls[1].kind != domain.HostCPU {
-		t.Errorf("second call = %+v", mon.calls[1])
+	if call.from != wantFrom || call.to != now.Unix() {
+		t.Errorf("window = %d..%d, want %d..%d", call.from, call.to, wantFrom, now.Unix())
 	}
 
 	resp := decode[struct {
 		Step   string              `json:"step"`
 		Series []api.SeriesHistory `json:"series"`
 	}](t, rec)
-	if resp.Step != "hour" || len(resp.Series) != 2 || resp.Series[0].Points[0].Avg != 40 {
+	if resp.Step != "hour" || len(resp.Series) != 2 || resp.Series[0].ID != 7 ||
+		resp.Series[0].Points[0].Avg != 40 {
 		t.Errorf("response = %+v", resp)
+	}
+}
+
+func TestHistoryUnknownSeries(t *testing.T) {
+	mon := &fakeMonitor{err: monitor.ErrUnknownSeries}
+	_, h := testServer(t, mon)
+	if rec := get(h, "/api/history?range=1h&id=99"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (%s)", rec.Code, rec.Body)
 	}
 }
 
@@ -144,10 +160,10 @@ func TestHistoryRejectsBadInput(t *testing.T) {
 	_, h := testServer(t, &fakeMonitor{})
 	cases := []string{
 		"/api/history?range=24h",
-		"/api/history?range=24h&series=oops",
-		"/api/history?range=14d&series=temp:a",
-		"/api/history?range=24h&series=:a",
-		"/api/history?range=24h&series=temp:",
+		"/api/history?range=24h&id=oops",
+		"/api/history?range=14d&id=1",
+		"/api/history?range=24h&id=0",
+		"/api/history?range=24h&id=-3",
 	}
 	for _, path := range cases {
 		if rec := get(h, path); rec.Code != http.StatusBadRequest {
@@ -159,7 +175,7 @@ func TestHistoryRejectsBadInput(t *testing.T) {
 func TestHistoryMonitorError(t *testing.T) {
 	mon := &fakeMonitor{err: errors.New("db down")}
 	_, h := testServer(t, mon)
-	if rec := get(h, "/api/history?range=1h&series=temp:a"); rec.Code != 500 {
+	if rec := get(h, "/api/history?range=1h&id=1"); rec.Code != 500 {
 		t.Errorf("status = %d", rec.Code)
 	}
 }
@@ -191,6 +207,15 @@ func TestWear(t *testing.T) {
 	}
 	if rec := get(h, "/api/wear?limit=20001"); rec.Code != 400 {
 		t.Errorf("limit=20001 status = %d", rec.Code)
+	}
+	if rec := get(h, "/api/wear?range=14d"); rec.Code != 400 {
+		t.Errorf("range=14d status = %d", rec.Code)
+	}
+	if rec := get(h, "/api/wear?range=30d"); rec.Code != 200 {
+		t.Errorf("range=30d status = %d", rec.Code)
+	}
+	if mon.wearSince == 0 {
+		t.Error("range=30d did not reach the monitor as a lower bound")
 	}
 }
 

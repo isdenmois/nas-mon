@@ -182,27 +182,74 @@ func (d *DB) Prune(now time.Time) error {
 	return nil
 }
 
-// History queries one aggregation table for the given series names. An empty
-// names slice returns every series of that kind.
-func (d *DB) History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+// ListSeries returns every recorded series.
+func (d *DB) ListSeries() ([]domain.Series, error) {
+	rows, err := d.sql.Query(`SELECT id, kind, name FROM series ORDER BY kind, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Series
+	for rows.Next() {
+		var s domain.Series
+		var kind string
+		if err := rows.Scan(&s.ID, &kind, &s.Name); err != nil {
+			return nil, err
+		}
+		s.Kind = domain.Kind(kind)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// Series returns the rows for the given ids. Missing ids are simply absent from
+// the result; the caller decides whether that is an error.
+func (d *DB) Series(ids []int64) ([]domain.Series, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := d.sql.Query(`SELECT id, kind, name FROM series WHERE id IN (`+
+		placeholders(len(ids))+`) ORDER BY id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Series
+	for rows.Next() {
+		var s domain.Series
+		var kind string
+		if err := rows.Scan(&s.ID, &kind, &s.Name); err != nil {
+			return nil, err
+		}
+		s.Kind = domain.Kind(kind)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// History queries one aggregation table for the given series ids.
+func (d *DB) History(ids []int64, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
 	table := res.Table()
 	if table == "" {
 		return nil, fmt.Errorf("unknown history resolution %q", res)
 	}
-	args := []any{string(kind)}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := []any{from, to}
+	for _, id := range ids {
+		args = append(args, id)
+	}
 	query := fmt.Sprintf(`
-		SELECT s.kind, s.name, p.ts, p.avg, p.min, p.max, p.n
+		SELECT s.id, s.kind, s.name, p.ts, p.avg, p.min, p.max, p.n
 		FROM %s p
 		JOIN series s ON s.id = p.series_id
-		WHERE s.kind = ? AND p.ts >= ? AND p.ts < ?`, table)
-	args = append(args, from, to)
-	if len(names) > 0 {
-		query += ` AND s.name IN (` + placeholders(len(names)) + `)`
-		for _, n := range names {
-			args = append(args, n)
-		}
-	}
-	query += ` ORDER BY s.name, p.ts`
+		WHERE p.ts >= ? AND p.ts < ? AND s.id IN (%s)
+		ORDER BY s.id, p.ts`, table, placeholders(len(ids)))
 
 	rows, err := d.sql.Query(query, args...)
 	if err != nil {
@@ -211,18 +258,19 @@ func (d *DB) History(kind domain.Kind, names []string, from, to int64, res domai
 	defer rows.Close()
 
 	var out []api.SeriesHistory
-	byName := map[string]int{}
+	byID := map[int64]int{}
 	for rows.Next() {
+		var id int64
 		var kind, name string
 		var p api.SeriesPoint
-		if err := rows.Scan(&kind, &name, &p.TS, &p.Avg, &p.Min, &p.Max, &p.N); err != nil {
+		if err := rows.Scan(&id, &kind, &name, &p.TS, &p.Avg, &p.Min, &p.Max, &p.N); err != nil {
 			return nil, err
 		}
-		i, ok := byName[name]
+		i, ok := byID[id]
 		if !ok {
 			i = len(out)
-			byName[name] = i
-			out = append(out, api.SeriesHistory{Kind: kind, Name: name})
+			byID[id] = i
+			out = append(out, api.SeriesHistory{ID: id, Kind: kind, Name: name})
 		}
 		out[i].Points = append(out[i].Points, p)
 	}
@@ -281,11 +329,19 @@ func (d *DB) WearLatest() ([]domain.WearObservation, error) {
 }
 
 // WearLog returns the newest limit wear rows across all devices.
-func (d *DB) WearLog(limit int) ([]domain.WearObservation, error) {
+func (d *DB) WearLog(limit int, since int64) ([]domain.WearObservation, error) {
 	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := d.sql.Query(wearSelect+` ORDER BY w.ts DESC, w.device LIMIT ?`, limit)
+	query := wearSelect
+	args := []any{limit}
+	if since > 0 {
+		query += ` WHERE w.ts >= ? ORDER BY w.ts DESC, w.device LIMIT ?`
+		args = []any{since, limit}
+	} else {
+		query += ` ORDER BY w.ts DESC, w.device LIMIT ?`
+	}
+	rows, err := d.sql.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

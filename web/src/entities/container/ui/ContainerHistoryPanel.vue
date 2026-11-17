@@ -2,24 +2,25 @@
 import { computed, ref } from 'vue'
 import type { ContainerSnapshot } from '@/shared/api'
 import type { RangeKey } from '@/shared/config'
-import { useAutoSelection, type HistorySeries } from '@/shared/lib'
+import { useAutoSelection, type SeriesIndex, type SeriesSpec } from '@/shared/lib'
 import { HistoryChart, RangePicker } from '@/shared/ui'
 import { containerColor } from '../model/container'
 
-const props = defineProps<{ containers: ContainerSnapshot[] }>()
+const props = defineProps<{ containers: ContainerSnapshot[]; seriesIndex: SeriesIndex }>()
 const emit = defineEmits<{ error: [message: string] }>()
 
 const range = ref<RangeKey>('24h')
 const names = computed(() => props.containers.map((container) => container.name))
 const selected = useAutoSelection(() => names.value)
 
-function seriesFor(kind: string): HistorySeries[] {
-  return selected.value.map((name) => ({
+function seriesFor(kind: string) {
+  const specs: SeriesSpec[] = selected.value.map((name) => ({
     kind,
     name,
     label: name,
     color: containerColor(names.value, name),
   }))
+  return props.seriesIndex.resolve(specs)
 }
 
 const cpuSeries = computed(() => seriesFor('container_cpu'))

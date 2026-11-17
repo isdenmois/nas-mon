@@ -102,7 +102,7 @@ func TestPruneRespectsEveryResolution(t *testing.T) {
 	}
 }
 
-func TestHistoryFiltersByNameAndStep(t *testing.T) {
+func TestHistoryFiltersByID(t *testing.T) {
 	db := openTest(t, 0, 0, 0)
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 	if err := db.InsertMinute([]domain.Point{
@@ -112,19 +112,25 @@ func TestHistoryFiltersByNameAndStep(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := db.History(domain.Temp, []string{"b"}, base, base+60, domain.Minute)
+	all := history(t, db, domain.Minute)
+	if len(all) != 2 {
+		t.Fatalf("temp minute series = %d, want 2", len(all))
+	}
+	var idB int64
+	for _, s := range all {
+		if s.Name == "b" {
+			idB = s.ID
+		}
+	}
+	got, err := db.History([]int64{idB}, base, base+60, domain.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].Name != "b" {
 		t.Fatalf("filtered history = %+v", got)
 	}
-	all := history(t, db, domain.Minute)
-	if len(all) != 2 {
-		t.Errorf("all temp minute series = %d, want 2", len(all))
-	}
-	if _, err := db.History(domain.Temp, nil, base, base+60, domain.Resolution(0)); err == nil {
-		t.Error("unknown step accepted")
+	if _, err := db.History([]int64{idB}, base, base+60, domain.Resolution(0)); err == nil {
+		t.Error("unknown resolution accepted")
 	}
 }
 
@@ -159,10 +165,25 @@ func TestWearLogRoundTrip(t *testing.T) {
 	if err != nil || len(latest) != 2 {
 		t.Fatalf("latest = %+v, %v", latest, err)
 	}
-	log, err := db.WearLog(10)
+	log, err := db.WearLog(10, 0)
 	if err != nil || len(log) != 2 || log[0].Disk != "nvme1n1" {
 		t.Errorf("log = %+v, %v", log, err)
 	}
+}
+
+func seriesIDs(t *testing.T, db *DB, kind domain.Kind) []int64 {
+	t.Helper()
+	series, err := db.ListSeries()
+	if err != nil {
+		t.Fatalf("list series: %v", err)
+	}
+	var ids []int64
+	for _, s := range series {
+		if s.Kind == kind {
+			ids = append(ids, s.ID)
+		}
+	}
+	return ids
 }
 
 func history(t *testing.T, db *DB, step domain.Resolution) []api.SeriesHistory {
@@ -171,11 +192,12 @@ func history(t *testing.T, db *DB, step domain.Resolution) []api.SeriesHistory {
 
 func historyKind(t *testing.T, db *DB, kind domain.Kind, step domain.Resolution) []api.SeriesHistory {
 	t.Helper()
+	ids := seriesIDs(t, db, kind)
 	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 	to := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
-	got, err := db.History(kind, nil, from, to, step)
+	got, err := db.History(ids, from, to, step)
 	if err != nil {
-		t.Fatalf("history %s: %v", step, err)
+		t.Fatalf("history %v: %v", step, err)
 	}
 	return got
 }
@@ -216,7 +238,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatalf("second open: %v", err)
 	}
 	defer second.Close()
-	got, err := second.History(domain.Temp, nil, base, base+60, domain.Minute)
+	got, err := second.History(seriesIDs(t, second, domain.Temp), base, base+60, domain.Minute)
 	if err != nil {
 		t.Fatalf("history after reopen: %v", err)
 	}
@@ -234,7 +256,7 @@ func TestWearAppendIsIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	log, err := db.WearLog(10)
+	log, err := db.WearLog(10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

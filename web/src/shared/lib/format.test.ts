@@ -8,43 +8,7 @@ import {
   formatPct,
   formatRate,
   formatValue,
-  rangeSeconds,
 } from './format'
-
-describe('rangeSeconds', () => {
-  it('should return the length of a short range', () => {
-    // Arrange
-    const range = '1h' as const
-
-    // Act
-    const result = rangeSeconds(range)
-
-    // Assert
-    expect(result).toBe(3600)
-  })
-
-  it('should return the length of a long range', () => {
-    // Arrange
-    const range = '1y' as const
-
-    // Act
-    const result = rangeSeconds(range)
-
-    // Assert
-    expect(result).toBe(365 * 86400)
-  })
-
-  it('should return null for the all-time range', () => {
-    // Arrange
-    const range = 'all' as const
-
-    // Act
-    const result = rangeSeconds(range)
-
-    // Assert
-    expect(result).toBeNull()
-  })
-})
 
 describe('formatBytes', () => {
   it('should format raw bytes', () => {

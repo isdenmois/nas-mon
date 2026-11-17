@@ -23,9 +23,10 @@ services:
       # Container stats come from the Engine API.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # SQLite database and wear log.
-      - ./data:/data
+      - data:/data
       # Every directory under /volumes is reported as a filesystem.
-      - /:/volumes/root:ro
+      - /var/local:/volumes/root:ro
+      - /downloads:/volumes/downloads:ro
       # - /mnt/media:/volumes/media:ro
       # - /mnt/backup:/volumes/backup:ro
 
@@ -47,8 +48,14 @@ services:
       MON_LOG_LEVEL: "${MON_LOG_LEVEL:-info}"
 
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${MON_PORT:-8090}/healthz || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:$${MON_PORT:-8090}/healthz || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+volumes:
+  data:

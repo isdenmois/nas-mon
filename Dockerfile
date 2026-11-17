@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM oven/bun:1-alpine AS web
+FROM oven/bun:1.4-alpine AS web
 WORKDIR /src
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
@@ -16,7 +16,7 @@ COPY internal ./internal
 COPY --from=web /src/internal/httpapi/dist ./internal/httpapi/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mon ./cmd/mon
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache smartmontools tzdata ca-certificates
 COPY --from=build /out/mon /usr/local/bin/mon
 EXPOSE 8090

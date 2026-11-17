@@ -45,7 +45,7 @@ Rules:
 | Term | Meaning |
 |---|---|
 | **Kind** | What is measured: `temp`, `host_cpu`, `container_mem`, … Persisted in SQLite and used as a Prometheus label. Never renamed without a migration. |
-| **Series** | A `Kind` applied to a `Name` (a host, a container, a sensor key, a disk). Identity is server-assigned: `Series.ID` is what the wire carries, so names containing `:` are not a parsing problem. |
+| **Series** | A `Kind` applied to a `Name` (a host, a container, a sensor key, a disk). Identity is server-assigned: `Series.ID` is what the wire carries, so names containing `:` are not a parsing problem. The overview exposes the registry as `SeriesDescriptor` (`{id, kind, name}`). |
 | **Sample** | One observation: `(Kind, Name, value)` at one instant. Lives in memory only. |
 | **Point** | An aggregated time bucket: `(TS, avg, min, max, n)`. The only thing written to SQLite. |
 | **Resolution** | The bucket size of a point table: minute, hour or day. Owns its table name and step. |
@@ -66,6 +66,9 @@ Rules:
 * **NaN and Inf never reach SQL.** `domain.Sanitize` runs at the ingest boundary.
 * **One process per database.** SQLite is opened single-writer; this is a
   deployment rule, not a lock.
+* **History is addressed by series id.** The wire never carries `kind:name`:
+  names legitimately contain colons, and a string the client assembles is a
+  string the server has to parse.
 * **Retention per resolution**: minutes 48 h, hours 90 d, days 5 y (configurable
   through `MON_RETENTION_*`; `0` keeps a resolution forever).
 
@@ -77,8 +80,9 @@ Rules:
 2. The collector struct: add the field and parse it.
 3. `monitor/ingest.go`: one mapping line from the snapshot to a `domain.Sample`.
 4. `api`: add the field to the snapshot DTO; `contracts.ts` follows.
-5. If it should be charted: the frontend asks the series registry for its id —
-   never builds a `kind:name` string.
+5. If it should be charted: the frontend resolves `(kind, name)` through
+   `entities/series` against the overview registry — never builds a string for
+   the wire.
 
 **Add an endpoint.**
 1. Wire types in `api` (if new).
@@ -107,7 +111,7 @@ Rules:
 | `store` | Real SQLite in `t.TempDir()`; every migration applied on open. |
 | `collect` | Fake `/proc`, `/sys` trees in `t.TempDir()`, in-process Docker fake, `httptest` for the socket client, canned `smartctl` output. |
 | `httpapi` | `httptest` against a fake monitor; no real DB. |
-| e2e | Playwright with a mocked API, frozen clock, committed chart screenshots. |
+| e2e | Playwright with a mocked API, frozen clock, committed chart screenshots. `e2e/fixtures.ts` owns the fake series registry; a new charted metric needs an id there. |
 
 `just test` is Go only; `just unit` is Vitest; `just e2e` needs neither root nor
 Docker.

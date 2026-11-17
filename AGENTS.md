@@ -42,12 +42,16 @@ works before the first frontend build because the stub is embedded.
 - Frontend uses Feature-Sliced Design: `app` → `pages` → `entities` → `shared`.
   Import only downward, and through each slice's `index.ts`. `@` maps to
   `web/src`. Do not add a `components/` dump or import across slices.
+  `entities/series` owns the id resolution for charts; a page builds the index
+  and passes it down, so entity views never import each other.
 - `web/src/shared/api/contracts.ts` mirrors JSON produced by the Go API. When
   adding/changing a field, update the Go response, the contract, and
   `e2e/fixtures.ts` together.
 
 ## Testing quirks
 
+- `e2e/fixtures.ts` owns the fake series registry: history is addressed by id,
+  so a newly charted metric needs a stable id added there.
 - The e2e mock must match real API paths only (`url.pathname.startsWith('/api/')`).
   A `**/api/**` glob also intercepts dev modules under `/src/shared/api/` and
   serves them a 404.

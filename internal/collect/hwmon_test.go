@@ -121,6 +121,21 @@ func TestHwmonExclude(t *testing.T) {
 	}
 }
 
+func TestHwmonFollowsClassSymlinks(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "devices", "hwmon", "hwmon0")
+	writeFile(t, filepath.Join(real, "name"), "k10temp\n")
+	writeFile(t, filepath.Join(real, "temp1_input"), "50000\n")
+	writeFile(t, filepath.Join(real, "temp1_label"), "Tctl\n")
+	root := t.TempDir()
+	if err := os.Symlink(real, filepath.Join(root, "hwmon0")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Hwmon{Root: root}.Read()
+	if err != nil || len(got) != 1 || got[0].Celsius != 50 {
+		t.Fatalf("got %+v, %v; want one CPU reading", got, err)
+	}
+}
+
 func TestHwmonMissingRootIsEmpty(t *testing.T) {
 	h := Hwmon{Root: filepath.Join(t.TempDir(), "nope")}
 	got, err := h.Read()

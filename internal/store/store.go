@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -37,9 +36,6 @@ type DB struct {
 	sql             *sql.DB
 	retentionMinute time.Duration
 	retentionHour   time.Duration
-
-	mu       sync.Mutex
-	seriesID map[string]int64
 }
 
 // Wear is one SSD wear snapshot.
@@ -137,7 +133,6 @@ func Open(path string, retentionMinute, retentionHour time.Duration) (*DB, error
 		sql:             sqlDB,
 		retentionMinute: retentionMinute,
 		retentionHour:   retentionHour,
-		seriesID:        make(map[string]int64),
 	}, nil
 }
 
@@ -147,7 +142,7 @@ func (d *DB) Close() error { return d.sql.Close() }
 // InsertMinute stores completed minute buckets, then refreshes the hour and day
 // aggregates for the hours and days those buckets touch.
 func (d *DB) InsertMinute(points []model.Point) error {
-	clean := points[:0]
+	clean := make([]model.Point, 0, len(points))
 	for _, p := range points {
 		if p.N <= 0 || p.Kind == "" || p.Name == "" {
 			continue
@@ -170,7 +165,7 @@ func (d *DB) InsertMinute(points []model.Point) error {
 	defer tx.Rollback()
 
 	for _, p := range clean {
-		id, err := d.seriesTx(tx, p.Kind, p.Name)
+		id, err := seriesTx(tx, p.Kind, p.Name)
 		if err != nil {
 			return err
 		}
@@ -401,25 +396,18 @@ func nullInt(v sql.NullInt64) *int64 {
 	return &n
 }
 
-func (d *DB) seriesTx(tx *sql.Tx, kind, name string) (int64, error) {
-	key := kind + "\x00" + name
-	d.mu.Lock()
-	id, ok := d.seriesID[key]
-	d.mu.Unlock()
-	if ok {
-		return id, nil
-	}
+// seriesTx resolves the series id inside the write transaction. No in-memory
+// cache is kept: a rolled back transaction must not leave ids that do not exist.
+func seriesTx(tx *sql.Tx, kind, name string) (int64, error) {
 	if _, err := tx.Exec(`INSERT INTO series (kind, name) VALUES (?, ?)
 		ON CONFLICT (kind, name) DO NOTHING`, kind, name); err != nil {
 		return 0, err
 	}
+	var id int64
 	if err := tx.QueryRow(`SELECT id FROM series WHERE kind = ? AND name = ?`,
 		kind, name).Scan(&id); err != nil {
 		return 0, err
 	}
-	d.mu.Lock()
-	d.seriesID[key] = id
-	d.mu.Unlock()
 	return id, nil
 }
 

@@ -62,7 +62,8 @@ func (h Hwmon) Read() ([]TempReading, error) {
 
 	var out []TempReading
 	for _, de := range dirs {
-		if !de.IsDir() || !strings.HasPrefix(de.Name(), "hwmon") {
+		// Entries in /sys/class/hwmon are symlinks, so IsDir is false here.
+		if !strings.HasPrefix(de.Name(), "hwmon") {
 			continue
 		}
 		dir := filepath.Join(h.Root, de.Name())
@@ -90,7 +91,22 @@ func (h Hwmon) Read() ([]TempReading, error) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out, nil
+	return dedupeTemps(out), nil
+}
+
+// dedupeTemps keeps the first reading per key; duplicate keys would merge two
+// different sensors into one history series.
+func dedupeTemps(in []TempReading) []TempReading {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, t := range in {
+		if seen[t.Key] {
+			continue
+		}
+		seen[t.Key] = true
+		out = append(out, t)
+	}
+	return out
 }
 
 // selectSensors applies the include override or the default selection: one CPU

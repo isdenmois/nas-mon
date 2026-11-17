@@ -41,14 +41,16 @@ type containerSummary struct {
 type dockerStats struct {
 	CPUStats struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
 		} `json:"cpu_usage"`
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 		OnlineCPUs     uint32 `json:"online_cpus"`
 	} `json:"cpu_stats"`
 	PreCPUStats struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
 		} `json:"cpu_usage"`
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 	} `json:"precpu_stats"`
@@ -228,6 +230,9 @@ func cpuPercent(st dockerStats) float64 {
 	sysDelta := st.CPUStats.SystemCPUUsage - st.PreCPUStats.SystemCPUUsage
 	cpus := st.CPUStats.OnlineCPUs
 	if cpus == 0 {
+		cpus = uint32(len(st.CPUStats.CPUUsage.PercpuUsage))
+	}
+	if cpus == 0 {
 		cpus = 1
 	}
 	return float64(cpuDelta) / float64(sysDelta) * float64(cpus) * 100
@@ -290,7 +295,7 @@ func (c *DockerClient) Containers(ctx context.Context) ([]containerSummary, erro
 // Stats returns one non-streaming stats sample for a container.
 func (c *DockerClient) Stats(ctx context.Context, id string) (dockerStats, error) {
 	var out dockerStats
-	err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/stats?stream=false&one-shot=false", &out)
+	err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/stats?stream=false", &out)
 	return out, err
 }
 

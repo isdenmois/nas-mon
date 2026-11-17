@@ -1,0 +1,52 @@
+name: mon
+
+services:
+  mon:
+    build:
+      context: .
+    image: mon:latest
+    container_name: mon
+    restart: unless-stopped
+
+    # smartctl needs raw device access and the Docker socket is root-equivalent
+    # anyway, so the container runs privileged. Keep the port on the LAN.
+    privileged: true
+    ports:
+      - "${MON_PUBLISH_PORT:-8090}:${MON_PORT:-8090}"
+
+    volumes:
+      # Sensor and block-device metadata for hwmon and SMART discovery.
+      - /sys/class/hwmon:/sys/class/hwmon:ro
+      - /sys/block:/sys/block:ro
+      # Container stats come from the Engine API.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # SQLite database and wear log.
+      - ./data:/data
+      # Every directory under /volumes is reported as a filesystem.
+      - /:/volumes/root:ro
+      # - /mnt/media:/volumes/media:ro
+      # - /mnt/backup:/volumes/backup:ro
+
+    environment:
+      MON_PORT: "${MON_PORT:-8090}"
+      MON_DB_PATH: "${MON_DB_PATH:-/data/mon.db}"
+      MON_TEMP_INTERVAL: "${MON_TEMP_INTERVAL:-10s}"
+      MON_DOCKER_INTERVAL: "${MON_DOCKER_INTERVAL:-15s}"
+      MON_HOST_INTERVAL: "${MON_HOST_INTERVAL:-15s}"
+      MON_VOLUME_INTERVAL: "${MON_VOLUME_INTERVAL:-60s}"
+      MON_SMART_INTERVAL: "${MON_SMART_INTERVAL:-12h}"
+      MON_AGGREGATE_INTERVAL: "${MON_AGGREGATE_INTERVAL:-1m}"
+      MON_RETENTION_MINUTE: "${MON_RETENTION_MINUTE:-48h}"
+      MON_RETENTION_HOUR: "${MON_RETENTION_HOUR:-2160h}"
+      MON_TEMP_WARN_C: "${MON_TEMP_WARN_C:-80}"
+      MON_TEMP_INCLUDE: "${MON_TEMP_INCLUDE:-}"
+      MON_TEMP_EXCLUDE: "${MON_TEMP_EXCLUDE:-}"
+      MON_DOCKER_EXCLUDE: "${MON_DOCKER_EXCLUDE:-}"
+      MON_LOG_LEVEL: "${MON_LOG_LEVEL:-info}"
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${MON_PORT:-8090}/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

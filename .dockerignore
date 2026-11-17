@@ -1,0 +1,6 @@
+.git
+.gitignore
+data
+web/node_modules
+internal/server/dist
+*.db

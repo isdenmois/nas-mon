@@ -182,7 +182,7 @@ func readLoadAvg(path string) (l1, l5, l15 float64, err error) {
 // physical interface.
 var virtualPrefixes = []string{
 	"lo", "veth", "docker", "br-", "virbr", "tap", "tun", "vmnet",
-	"cni", "flannel", "kube", "cali", "wg",
+	"cni", "flannel", "kube", "cali", "wg", "tailscale",
 }
 
 func readNetDev(path string) (rx, tx uint64, err error) {

@@ -149,10 +149,11 @@ scrape_configs:
 
 ## Разработка
 
-Нужны Go 1.27+ и Node 24+.
+Нужны Go 1.27+ и Bun 1.4+.
 
 ```sh
-make web     # npm ci + vite build -> internal/server/dist (вшивается в бинарь)
+bun install  # зависимости фронтенда и e2e
+make web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
 make test    # go test ./...
 make vet
 make build   # bin/mon
@@ -171,16 +172,15 @@ MON_DB_PATH=./data/mon.db MON_SMART_INTERVAL=0 go run ./cmd/mon
 
 Playwright поднимает Vite dev server и перехватывает все `/api/*` запросы,
 поэтому Go-бэкенд, root и Docker не нужны. Время в браузере заморожено,
-локаль и таймзона зафиксированы, данные — из `web/e2e/fixtures.ts`.
+локаль и таймзона зафиксированы, данные — из `e2e/fixtures.ts`.
 
 ```sh
-cd web
-npx playwright install chromium   # один раз
-npm run test:e2e                  # или make e2e из корня
-npm run test:e2e:update           # перегенерировать эталоны графиков
+bunx playwright install chromium  # один раз
+bun run test:e2e                  # или make e2e из корня
+bun run test:e2e:update           # перегенерировать эталоны графиков
 ```
 
-Скриншоты чартов лежат в `web/e2e/__screenshots__/` и коммитятся. После
+Скриншоты чартов лежат в `e2e/__screenshots__/` и коммитятся. После
 осознанного изменения внешнего вида графиков обнови их через
 `test:e2e:update` и проверь diff картинок.
 

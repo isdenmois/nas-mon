@@ -2,10 +2,10 @@
 *.db
 *.db-wal
 *.db-shm
-/web/node_modules/
-/web/test-results/
-/web/playwright-report/
-/web/blob-report/
+/node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
 /internal/server/dist/*
 !/internal/server/dist/index.html
 

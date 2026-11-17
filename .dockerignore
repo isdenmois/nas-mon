@@ -1,7 +1,11 @@
 .git
 .gitignore
 data
-web/node_modules
+node_modules
+e2e
+test-results
+playwright-report
+blob-report
 internal/server/dist
 *.db
 .env

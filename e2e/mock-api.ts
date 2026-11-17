@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import type { HistoryResponse, Overview, WearResponse } from '../src/types'
+import type { HistoryResponse, Overview, WearResponse } from '../web/src/types'
 import { FIXED_NOW, historyFor, overview, wear } from './fixtures'
 
 export interface ApiOptions {

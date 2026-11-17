@@ -69,6 +69,9 @@ works before the first frontend build because the stub is embedded.
 
 ## Style
 
+- UnoCSS (`web/uno.config.ts`) provides atomic utilities; its theme colors map to
+  the CSS variables in `web/src/app/styles/global.css`. Use utilities for new
+  layout and leaf components, and keep shared component classes in `global.css`.
 - Biome covers `web/`, `e2e/`, `playwright.config.ts`, and `package.json`; use
   `bun run lint:fix`. `noUnusedImports`/`noUnusedVariables` are disabled for
   `.vue` because Biome cannot see template usage — `vue-tsc` is the authority.

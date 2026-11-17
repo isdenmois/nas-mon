@@ -183,7 +183,9 @@ MON_DB_PATH=./data/mon.db MON_SMART_INTERVAL=0 go run ./cmd/mon
   диапазоны, графики и переиспользуемые элементы UI.
 
 У каждого слайса своя публичная точка входа `index.ts`, алиас `@/` указывает на
-`web/src`.
+`web/src`. Стили — UnoCSS (`web/uno.config.ts`): утилиты в разметке используют
+цвета из CSS-переменных `web/src/app/styles/global.css`, а общие классы
+компонентов остаются в этом файле.
 
 ### Unit-тесты
 

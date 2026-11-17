@@ -1,5 +1,36 @@
 import type { RangeKey } from './types'
 
+export type ValueFormat = 'percent' | 'bytes' | 'rate' | 'number' | 'temperature'
+
+export function formatValue(value: number, format: ValueFormat): string {
+  switch (format) {
+    case 'percent':
+      return formatPct(value)
+    case 'bytes':
+      return formatBytes(value)
+    case 'rate':
+      return formatRate(value)
+    case 'temperature':
+      return `${formatNum(value)} °C`
+    default:
+      return formatNum(value)
+  }
+}
+
+// rangeSeconds returns the length of a UI preset; null means "all time".
+export function rangeSeconds(range: RangeKey): number | null {
+  const seconds: Record<Exclude<RangeKey, 'all'>, number> = {
+    '1h': 3600,
+    '6h': 6 * 3600,
+    '24h': 24 * 3600,
+    '7d': 7 * 86400,
+    '30d': 30 * 86400,
+    '90d': 90 * 86400,
+    '1y': 365 * 86400,
+  }
+  return range === 'all' ? null : seconds[range]
+}
+
 const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 const decimal = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 })
 const integer = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })

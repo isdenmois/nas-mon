@@ -7,6 +7,7 @@ import StatusChips from './components/StatusChips.vue'
 import TempPanel from './components/TempPanel.vue'
 import HostPanel from './components/HostPanel.vue'
 import ContainerTable from './components/ContainerTable.vue'
+import ContainerHistory from './components/ContainerHistory.vue'
 import VolumePanel from './components/VolumePanel.vue'
 import SmartPanel from './components/SmartPanel.vue'
 
@@ -76,6 +77,7 @@ onBeforeUnmount(() => {
       <TempPanel :temps="overview?.temps ?? []" @error="notify" />
       <HostPanel :host="overview?.host" />
       <ContainerTable :containers="overview?.containers ?? []" />
+      <ContainerHistory :containers="overview?.containers ?? []" />
       <VolumePanel :volumes="overview?.volumes ?? []" />
       <SmartPanel :smart="overview?.smart ?? []" :error="smartError" @error="notify" />
     </main>

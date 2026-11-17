@@ -111,3 +111,22 @@ export interface WearResponse {
 
 export const RANGES = ['1h', '6h', '24h', '7d', '30d', '90d', '1y', 'all'] as const
 export type RangeKey = (typeof RANGES)[number]
+
+export interface ChartPoint {
+  ts: number
+  value: number
+}
+
+export interface ChartSeries {
+  label: string
+  points: ChartPoint[]
+  color?: string
+  dashed?: boolean
+}
+
+export interface HistorySeries {
+  kind: string
+  name: string
+  label: string
+  color?: string
+}

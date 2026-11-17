@@ -207,6 +207,12 @@ func TestWear(t *testing.T) {
 	if rec := get(h, "/api/wear?limit=0"); rec.Code != 400 {
 		t.Errorf("limit=0 status = %d", rec.Code)
 	}
+	if rec := get(h, "/api/wear?limit=20000"); rec.Code != 200 {
+		t.Errorf("limit=20000 status = %d", rec.Code)
+	}
+	if rec := get(h, "/api/wear?limit=20001"); rec.Code != 400 {
+		t.Errorf("limit=20001 status = %d", rec.Code)
+	}
 }
 
 func TestMetricsExposition(t *testing.T) {

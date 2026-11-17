@@ -691,3 +691,37 @@ tbody tr:last-child td {
     transition: none !important;
   }
 }
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.chart-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-alt);
+}
+
+.chart-card h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chart-card .chart-empty {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 640px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+}

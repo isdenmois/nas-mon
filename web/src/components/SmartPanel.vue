@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { errorMessage, fetchWear, isAbortError } from '../api'
-import { clampPct, formatBytes, formatDateTime, formatNum } from '../format'
-import type { DiskSmart, Wear, WearResponse } from '../types'
+import { clampPct, formatBytes, formatDateTime, formatNum, rangeSeconds } from '../format'
+import {
+  RANGES,
+  type ChartSeries,
+  type DiskSmart,
+  type RangeKey,
+  type Wear,
+  type WearResponse,
+} from '../types'
+import SeriesChart from './SeriesChart.vue'
 
-defineProps<{ smart: DiskSmart[]; error?: string }>()
+const props = defineProps<{ smart: DiskSmart[]; error?: string }>()
 const emit = defineEmits<{ error: [message: string] }>()
+
+const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#22d3ee', '#facc15']
 
 const expanded = ref<string | null>(null)
 const wear = ref<WearResponse | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+const range = ref<RangeKey>('30d')
 
 let controller: AbortController | null = null
 let requestId = 0
+let timer: ReturnType<typeof setInterval> | undefined
 
 const logs = computed(() => {
   const byDisk = new Map<string, Wear[]>()
@@ -25,12 +37,40 @@ const logs = computed(() => {
   return byDisk
 })
 
+const tbwDatasets = computed<ChartSeries[]>(() => {
+  const window = rangeSeconds(range.value)
+  const since = window == null ? null : Date.now() / 1000 - window
+  const byDisk = new Map<string, Map<number, number>>()
+  for (const entry of wear.value?.log ?? []) {
+    if (entry.tbw_bytes == null) continue
+    if (since != null && entry.ts < since) continue
+    let points = byDisk.get(entry.disk)
+    if (!points) {
+      points = new Map()
+      byDisk.set(entry.disk, points)
+    }
+    points.set(entry.ts, entry.tbw_bytes)
+  }
+  return [...byDisk.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([disk, points], index) => ({
+      label: disk,
+      color: palette[index % palette.length],
+      points: [...points.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([ts, value]) => ({ ts, value })),
+    }))
+})
+
+const tbwEmptyText = computed(() =>
+  loading.value && !wear.value ? 'Loading write history…' : 'No TBW history yet',
+)
+
 function wearLog(disk: string): Wear[] {
   return logs.value.get(disk) ?? []
 }
 
 async function loadWear(): Promise<void> {
-  if (wear.value) return
   controller?.abort()
   const ctrl = new AbortController()
   controller = ctrl
@@ -38,7 +78,7 @@ async function loadWear(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    const data = await fetchWear(200, ctrl.signal)
+    const data = await fetchWear(20000, ctrl.signal)
     if (id !== requestId) return
     wear.value = data
   } catch (err) {
@@ -52,10 +92,20 @@ async function loadWear(): Promise<void> {
 
 function toggle(disk: string): void {
   expanded.value = expanded.value === disk ? null : disk
-  if (expanded.value) void loadWear()
+  if (expanded.value && !wear.value) void loadWear()
 }
 
-onBeforeUnmount(() => controller?.abort())
+onMounted(() => {
+  void loadWear()
+  timer = setInterval(() => {
+    void loadWear()
+  }, 5 * 60_000)
+})
+
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+  controller?.abort()
+})
 </script>
 
 <template>
@@ -172,5 +222,33 @@ onBeforeUnmount(() => controller?.abort())
         </tbody>
       </table>
     </div>
+
+    <template v-if="smart.length > 0 || tbwDatasets.length > 0">
+      <div class="panel-head chart-head">
+        <h3>Lifetime written (TBW)</h3>
+        <div class="ranges" role="group" aria-label="TBW history range">
+          <button
+            v-for="item in RANGES"
+            :key="item"
+            type="button"
+            class="range-btn"
+            :aria-pressed="range === item"
+            :aria-label="`Show ${item} of TBW history`"
+            @click="range = item"
+          >
+            {{ item }}
+          </button>
+        </div>
+      </div>
+      <SeriesChart
+        :datasets="tbwDatasets"
+        format="bytes"
+        :range="range"
+        height="220px"
+        show-points
+        :empty-text="tbwEmptyText"
+      />
+      <p v-if="loadError" class="inline-error" role="status">Wear history unavailable: {{ loadError }}</p>
+    </template>
   </section>
 </template>

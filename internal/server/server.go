@@ -117,8 +117,8 @@ func (s *Server) handleWear(w http.ResponseWriter, r *http.Request) {
 	limit := 200
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		v, err := strconv.Atoi(raw)
-		if err != nil || v < 1 || v > 1000 {
-			writeError(w, http.StatusBadRequest, "limit must be 1..1000")
+		if err != nil || v < 1 || v > 20000 {
+			writeError(w, http.StatusBadRequest, "limit must be 1..20000")
 			return
 		}
 		limit = v

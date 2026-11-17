@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +236,10 @@ func (a *App) collectVolumes(ctx context.Context) error {
 	return err
 }
 
+// wearLogTBWStep is the minimum TBW growth (0.1 TB, decimal) that deserves a
+// wear-log row. Smaller writes are accumulated between rows.
+const wearLogTBWStep = int64(100_000_000_000)
+
 func (a *App) collectSmart(ctx context.Context) error {
 	now := time.Now()
 	disks, readErr := a.smart.Read(ctx)
@@ -251,7 +256,7 @@ func (a *App) collectSmart(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("last wear %s: %w", d.Disk, err))
 			continue
 		}
-		appendRow, reason := shouldAppendWear(prev, d, now)
+		appendRow, reason := shouldAppendWear(prev, d, wearLogTBWStep)
 		if !appendRow {
 			continue
 		}
@@ -268,32 +273,51 @@ func (a *App) collectSmart(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// shouldAppendWear appends when the wear counters changed or when the last row
-// is from an earlier UTC day. Temperature alone does not create a row.
-func shouldAppendWear(prev *store.Wear, d collect.DiskSmart, now time.Time) (bool, string) {
+// shouldAppendWear reports whether a wear row is worth writing. Only the first
+// observation, a drive identity change, new errors, more wear or at least
+// tbwStep of new writes qualify. Power-on hours and temperature do not: they
+// change on every poll and would turn the log into noise.
+func shouldAppendWear(prev *store.Wear, d collect.DiskSmart, tbwStep int64) (bool, string) {
 	if prev == nil {
 		return true, "first"
 	}
-	changed := prev.Model != d.Model || prev.Serial != d.Serial ||
-		!sameInt(prev.PercentageUsed, d.PercentageUsed) ||
-		!sameInt(prev.TBWBytes, d.TBWBytes) ||
-		!sameInt(prev.PowerOnHours, d.PowerOnHours) ||
-		!sameInt(prev.MediaErrors, d.MediaErrors) ||
-		!sameInt(prev.Reallocated, d.Reallocated)
-	if changed {
-		return true, "change"
+	var reasons []string
+	if prev.Model != d.Model || prev.Serial != d.Serial {
+		reasons = append(reasons, "identity")
 	}
-	if now.UTC().Unix()/86400 != prev.TS/86400 {
-		return true, "daily"
+	if increased(prev.MediaErrors, d.MediaErrors) || increased(prev.Reallocated, d.Reallocated) {
+		reasons = append(reasons, "errors")
 	}
-	return false, ""
+	if increased(prev.PercentageUsed, d.PercentageUsed) {
+		reasons = append(reasons, "wear")
+	}
+	switch {
+	case prev.TBWBytes == nil && d.TBWBytes != nil:
+		reasons = append(reasons, "tbw")
+	case prev.TBWBytes != nil && d.TBWBytes != nil:
+		delta := *d.TBWBytes - *prev.TBWBytes
+		if delta >= tbwStep {
+			reasons = append(reasons, "tbw")
+		} else if delta < 0 {
+			reasons = append(reasons, "tbw-reset")
+		}
+	}
+	if len(reasons) == 0 {
+		return false, ""
+	}
+	return true, strings.Join(reasons, "+")
 }
 
-func sameInt(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
+// increased reports a counter growing or appearing with a non-zero value.
+// A drive that starts reporting zero errors is not a significant change.
+func increased(prev, cur *int64) bool {
+	if cur == nil {
+		return false
 	}
-	return *a == *b
+	if prev == nil {
+		return *cur > 0
+	}
+	return *cur > *prev
 }
 
 // flush persists every fully closed minute bucket.

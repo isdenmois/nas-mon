@@ -786,3 +786,8 @@ tbody tr:last-child td {
   color: var(--text);
   font: inherit;
 }
+
+.log-note {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+}

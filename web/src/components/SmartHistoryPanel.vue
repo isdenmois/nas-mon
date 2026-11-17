@@ -104,9 +104,10 @@ async function loadWear(): Promise<void> {
 
 onMounted(() => {
   void loadWear()
+  // SMART rows change at most once per MON_SMART_INTERVAL (12h by default).
   timer = setInterval(() => {
     void loadWear()
-  }, 5 * 60_000)
+  }, 12 * 60 * 60_000)
 })
 
 onBeforeUnmount(() => {
@@ -201,6 +202,10 @@ onBeforeUnmount(() => {
       </div>
       <p v-else class="muted">No wear log entries yet.</p>
       <p v-if="selectedLog.length >= 200" class="muted">Showing the latest 200 entries.</p>
+      <p class="muted log-note">
+        Logged only on significant changes: new errors, more wear, or at least 100 GB of new
+        writes. Power-on hours and temperature alone do not create a row.
+      </p>
     </template>
   </section>
 </template>

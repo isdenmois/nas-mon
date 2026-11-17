@@ -1,4 +1,4 @@
-import type { RangeKey } from '../config'
+import type { RangeKey } from '@/shared/config'
 import type { WearResponse } from './contracts'
 import { request } from './client'
 

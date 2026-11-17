@@ -1,8 +1,8 @@
-import type { RangeKey } from '../config'
+import type { RangeKey } from '@/shared/config'
 
 export type ValueFormat = 'percent' | 'bytes' | 'rate' | 'number' | 'temperature'
 
-export function formatValue(value: number, format: ValueFormat): string {
+export function formatValue(value: number | null | undefined, format: ValueFormat): string {
   switch (format) {
     case 'percent':
       return formatPct(value)
@@ -11,10 +11,18 @@ export function formatValue(value: number, format: ValueFormat): string {
     case 'rate':
       return formatRate(value)
     case 'temperature':
+      if (value == null || !Number.isFinite(value)) return '—'
       return `${formatNum(value)} °C`
     default:
       return formatNum(value)
   }
+}
+
+// formatHours renders a count of hours, keeping "—" for values a drive does not
+// report.
+export function formatHours(value: number | null | undefined): string {
+  const hours = formatNum(value)
+  return hours === '—' ? hours : `${hours} h`
 }
 
 const byteUnits = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']

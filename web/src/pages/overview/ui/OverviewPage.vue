@@ -5,7 +5,7 @@ import { ContainerTable } from '@/entities/container'
 import { SmartPanel } from '@/entities/disk'
 import { HostPanel } from '@/entities/host'
 import { TemperaturePanel } from '@/entities/temperature'
-import VolumePanel from './VolumePanel.vue'
+import { VolumePanel } from '@/entities/volume'
 
 const props = defineProps<{ overview: Overview | null }>()
 

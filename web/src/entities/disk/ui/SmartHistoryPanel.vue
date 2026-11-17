@@ -8,7 +8,7 @@ import {
   type WearResponse,
 } from '@/shared/api'
 import type { RangeKey } from '@/shared/config'
-import { formatBytes, formatDateTime, formatNum } from '@/shared/lib'
+import { formatBytes, formatDateTime, formatHours, formatValue } from '@/shared/lib'
 import { RangePicker, SeriesChart } from '@/shared/ui'
 import {
   groupWearByDisk,
@@ -152,11 +152,11 @@ onBeforeUnmount(() => {
             <tr v-for="(entry, index) in selectedLog" :key="`${entry.ts}-${index}`">
               <td>{{ formatDateTime(entry.ts) }}</td>
               <td>{{ entry.reason || '—' }}</td>
-              <td class="num">{{ entry.percentage_used == null ? '—' : `${entry.percentage_used}%` }}</td>
+              <td class="num">{{ formatValue(entry.percentage_used, 'percent') }}</td>
               <td class="num">{{ formatBytes(entry.tbw_bytes) }}</td>
-              <td class="num">{{ entry.power_on_hours == null ? '—' : `${formatNum(entry.power_on_hours)} h` }}</td>
+              <td class="num">{{ formatHours(entry.power_on_hours) }}</td>
               <td class="num">{{ entry.media_errors ?? '—' }}</td>
-              <td class="num">{{ entry.temp_c == null ? '—' : `${entry.temp_c} °C` }}</td>
+              <td class="num">{{ formatValue(entry.temp_c, 'temperature') }}</td>
             </tr>
           </tbody>
         </table>

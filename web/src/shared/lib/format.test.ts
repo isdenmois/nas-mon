@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatNum,
   formatPct,
+  formatHours,
   formatRate,
   formatValue,
 } from './format'
@@ -171,6 +172,41 @@ describe('formatValue', () => {
 
     // Assert
     expect(result).toMatch(/^2[.,]0 KB\/s$/)
+  })
+
+  it('should render a missing value as a dash', () => {
+    // Arrange
+    const value = null
+
+    // Act
+    const result = formatValue(value, 'temperature')
+
+    // Assert
+    expect(result).toBe('—')
+  })
+})
+
+describe('formatHours', () => {
+  it('should append the hour unit', () => {
+    // Arrange
+    const value = 12034
+
+    // Act
+    const result = formatHours(value)
+
+    // Assert
+    expect(result).toMatch(/^12[.,]034 h$/)
+  })
+
+  it('should keep the dash for a missing value', () => {
+    // Arrange
+    const value = undefined
+
+    // Act
+    const result = formatHours(value)
+
+    // Assert
+    expect(result).toBe('—')
   })
 })
 

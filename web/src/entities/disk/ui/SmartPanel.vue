@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DiskSmart } from '@/shared/api'
-import { formatBytes, formatDateTime, formatNum } from '@/shared/lib'
+import { formatBytes, formatDateTime, formatHours, formatValue } from '@/shared/lib'
 import { UsageBar } from '@/shared/ui'
 
 defineProps<{ smart: DiskSmart[]; error?: string }>()
@@ -47,13 +47,13 @@ defineProps<{ smart: DiskSmart[]; error?: string }>()
                   :danger-at="80"
                 />
                 <span :class="{ 'warn-text': (disk.percentage_used ?? 0) >= 80 }">
-                  {{ disk.percentage_used == null ? '—' : `${disk.percentage_used}%` }}
+                  {{ formatValue(disk.percentage_used, 'percent') }}
                 </span>
                 <span v-if="(disk.percentage_used ?? 0) >= 80" class="badge danger">high</span>
               </div>
             </td>
             <td class="num">{{ formatBytes(disk.tbw_bytes) }}</td>
-            <td class="num">{{ disk.power_on_hours == null ? '—' : `${formatNum(disk.power_on_hours)} h` }}</td>
+            <td class="num">{{ formatHours(disk.power_on_hours) }}</td>
             <td class="num" :class="{ 'warn-text': (disk.media_errors ?? 0) > 0 }">
               {{ disk.media_errors ?? '—' }}
               <span v-if="(disk.media_errors ?? 0) > 0" class="badge danger">errors</span>
@@ -62,7 +62,7 @@ defineProps<{ smart: DiskSmart[]; error?: string }>()
               {{ disk.reallocated ?? '—' }}
               <span v-if="(disk.reallocated ?? 0) > 0" class="badge danger">realloc</span>
             </td>
-            <td class="num">{{ disk.temp_c == null ? '—' : `${disk.temp_c} °C` }}</td>
+            <td class="num">{{ formatValue(disk.temp_c, 'temperature') }}</td>
             <td class="updated-cell">{{ formatDateTime(disk.collected_at) }}</td>
           </tr>
         </tbody>

@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import type { HistoryResponse, Overview, WearResponse } from '../web/src/types'
+import type { HistoryResponse, Overview, WearResponse } from '../web/src/shared/api/contracts'
 import { FIXED_NOW, historyFor, overview, wear } from './fixtures'
 
 export interface ApiOptions {
@@ -22,41 +22,44 @@ export interface ApiCalls {
 export async function mockApi(page: Page, options: ApiOptions = {}): Promise<ApiCalls> {
   const calls: ApiCalls = { overview: 0, history: [], wear: 0 }
 
-  await page.route('**/api/**', async (route) => {
-    const url = new URL(route.request().url())
+  await page.route(
+    (url) => url.pathname.startsWith('/api/'),
+    async (route) => {
+      const url = new URL(route.request().url())
 
-    if (url.pathname === '/api/overview') {
-      calls.overview += 1
-      await fulfill(route, options.overviewError, options.overview ?? overview)
-      return
-    }
-
-    if (url.pathname === '/api/history') {
-      const range = url.searchParams.get('range') ?? '24h'
-      const series = url.searchParams.getAll('series')
-      calls.history.push({ range, series })
-      let data: HistoryResponse
-      if (typeof options.history === 'function') {
-        data = options.history(series, range)
-      } else {
-        data = options.history ?? historyFor(series, range)
+      if (url.pathname === '/api/overview') {
+        calls.overview += 1
+        await fulfill(route, options.overviewError, options.overview ?? overview)
+        return
       }
-      await fulfill(route, options.historyError, data)
-      return
-    }
 
-    if (url.pathname === '/api/wear') {
-      calls.wear += 1
-      await fulfill(route, options.wearError, options.wear ?? wear)
-      return
-    }
+      if (url.pathname === '/api/history') {
+        const range = url.searchParams.get('range') ?? '24h'
+        const series = url.searchParams.getAll('series')
+        calls.history.push({ range, series })
+        let data: HistoryResponse
+        if (typeof options.history === 'function') {
+          data = options.history(series, range)
+        } else {
+          data = options.history ?? historyFor(series, range)
+        }
+        await fulfill(route, options.historyError, data)
+        return
+      }
 
-    await route.fulfill({
-      status: 404,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: 'not found' }),
-    })
-  })
+      if (url.pathname === '/api/wear') {
+        calls.wear += 1
+        await fulfill(route, options.wearError, options.wear ?? wear)
+        return
+      }
+
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'not found' }),
+      })
+    },
+  )
 
   return calls
 }

@@ -1,4 +1,9 @@
-import type { HistoryResponse, Overview, SeriesHistory, WearResponse } from '../web/src/types'
+import type {
+  HistoryResponse,
+  Overview,
+  SeriesHistory,
+  WearResponse,
+} from '../web/src/shared/api/contracts'
 
 // All fixtures are anchored to this instant. The browser clock is frozen to it
 // in every spec so timestamps, chart axes and the wear-log range stay stable.

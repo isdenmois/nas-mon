@@ -11,8 +11,10 @@ services:
     # smartctl needs raw device access and the Docker socket is root-equivalent
     # anyway, so the container runs privileged. Keep the port on the LAN.
     privileged: true
-    ports:
-      - "${MON_PUBLISH_PORT:-8090}:${MON_PORT:-8090}"
+
+    # Host network namespace is required for /proc/net/dev to describe the host
+    # instead of the container's own eth0. MON_PORT is therefore the host port.
+    network_mode: host
 
     volumes:
       # Sensor and block-device metadata for hwmon and SMART discovery.

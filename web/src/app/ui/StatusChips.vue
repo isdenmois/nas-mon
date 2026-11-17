@@ -35,8 +35,12 @@ function errorFor(name: string | null): string {
 </script>
 
 <template>
-  <div class="collectors">
-    <div class="chips" role="group" aria-label="Collector status">
+  <div class="min-w-0 max-w-full">
+    <div
+      class="flex flex-wrap justify-end gap-1.5 max-[640px]:justify-start"
+      role="group"
+      aria-label="Collector status"
+    >
       <button
         v-for="[name, status] in entries"
         :key="name"

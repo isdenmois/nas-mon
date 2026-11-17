@@ -6,7 +6,7 @@ const emit = defineEmits<{ 'update:range': [range: RangeKey] }>()
 </script>
 
 <template>
-  <div class="ranges" role="group" :aria-label="groupLabel">
+  <div class="flex flex-wrap gap-1.5" role="group" :aria-label="groupLabel">
     <button
       v-for="item in RANGES"
       :key="item"

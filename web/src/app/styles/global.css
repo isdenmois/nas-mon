@@ -124,18 +124,6 @@ select:focus-visible {
   font-size: 0.82rem;
 }
 
-.collectors {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
 .chip {
   display: inline-flex;
   align-items: center;
@@ -325,34 +313,6 @@ select:focus-visible {
   align-items: center;
 }
 
-.ranges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.range-btn {
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.range-btn:hover {
-  border-color: #3b4a68;
-  color: var(--text);
-}
-
-.range-btn[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #0b1120;
-  font-weight: 600;
-}
-
 .sensor-picker {
   display: flex;
   flex-wrap: wrap;
@@ -440,26 +400,6 @@ select:focus-visible {
   color: var(--muted);
   font-size: 0.78rem;
   overflow-wrap: anywhere;
-}
-
-.bar {
-  height: 6px;
-  margin-top: 8px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #0b1324;
-}
-
-.bar > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-  transition: width 0.25s ease;
-}
-
-.bar > span.danger {
-  background: var(--danger);
 }
 
 .loads {
@@ -696,10 +636,6 @@ tbody tr:last-child td {
 
   .brand {
     width: 100%;
-  }
-
-  .chips {
-    justify-content: flex-start;
   }
 
   .panel {

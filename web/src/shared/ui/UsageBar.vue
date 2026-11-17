@@ -22,7 +22,7 @@ const pct = computed(() => clampPct(props.value))
 
 <template>
   <div
-    class="bar"
+    class="mt-2 h-1.5 overflow-hidden rounded-[999px] bg-[#0b1324]"
     :role="hidden ? undefined : 'progressbar'"
     :aria-label="hidden ? undefined : label"
     :aria-hidden="hidden ? 'true' : undefined"
@@ -30,6 +30,10 @@ const pct = computed(() => clampPct(props.value))
     :aria-valuemax="hidden ? undefined : 100"
     :aria-valuenow="hidden ? undefined : Math.round(pct)"
   >
-    <span :class="{ danger: pct >= dangerAt }" :style="{ width: `${pct}%` }"></span>
+    <span
+      class="block h-full rounded-[inherit] [transition:width_0.25s_ease]"
+      :class="pct >= dangerAt ? 'bg-danger' : 'bg-accent'"
+      :style="{ width: `${pct}%` }"
+    ></span>
   </div>
 </template>

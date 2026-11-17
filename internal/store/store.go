@@ -13,22 +13,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"mon/internal/model"
-)
-
-const (
-	minute = int64(60)
-	hour   = int64(3600)
-	day    = int64(86400)
-)
-
-// Step selects the aggregation table used for a history query.
-type Step string
-
-const (
-	StepMinute Step = "minute"
-	StepHour   Step = "hour"
-	StepDay    Step = "day"
+	"mon/internal/api"
+	"mon/internal/domain"
 )
 
 // DB is the SQLite-backed history store.
@@ -141,17 +127,20 @@ func (d *DB) Close() error { return d.sql.Close() }
 
 // InsertMinute stores completed minute buckets, then refreshes the hour and day
 // aggregates for the hours and days those buckets touch.
-func (d *DB) InsertMinute(points []model.Point) error {
-	clean := make([]model.Point, 0, len(points))
+func (d *DB) InsertMinute(points []domain.Point) error {
+	clean := make([]domain.Point, 0, len(points))
 	for _, p := range points {
-		if p.N <= 0 || p.Kind == "" || p.Name == "" {
+		if p.N <= 0 || !p.Kind.Valid() || p.Name == "" {
 			continue
 		}
-		if math.IsNaN(p.Avg) || math.IsInf(p.Avg, 0) ||
-			math.IsNaN(p.Min) || math.IsNaN(p.Max) {
+		avg, okAvg := domain.Sanitize(p.Avg)
+		mn, okMin := domain.Sanitize(p.Min)
+		mx, okMax := domain.Sanitize(p.Max)
+		if !okAvg || !okMin || !okMax {
 			continue
 		}
-		p.TS = p.TS - mod(p.TS, minute)
+		p.Avg, p.Min, p.Max = avg, mn, mx
+		p.TS = domain.Minute.Bucket(p.TS)
 		clean = append(clean, p)
 	}
 	if len(clean) == 0 {
@@ -186,17 +175,17 @@ func (d *DB) InsertMinute(points []model.Point) error {
 
 	minHour, maxHour := int64(math.MaxInt64), int64(math.MinInt64)
 	for _, p := range clean {
-		h := p.TS - mod(p.TS, hour)
+		h := domain.Hour.Bucket(p.TS)
 		minHour = min(minHour, h)
 		maxHour = max(maxHour, h)
 	}
-	for h := minHour; h <= maxHour; h += hour {
-		if err := rollup(tx, "points_1h", "points_1m", h, h+hour); err != nil {
+	for h := minHour; h <= maxHour; h += domain.Hour.Seconds() {
+		if err := rollup(tx, domain.Hour.Table(), domain.Minute.Table(), h, h+domain.Hour.Seconds()); err != nil {
 			return err
 		}
 	}
-	for dd := minHour - mod(minHour, day); dd <= maxHour; dd += day {
-		if err := rollup(tx, "points_1d", "points_1h", dd, dd+day); err != nil {
+	for dd := domain.Day.Bucket(minHour); dd <= maxHour; dd += domain.Day.Seconds() {
+		if err := rollup(tx, domain.Day.Table(), domain.Hour.Table(), dd, dd+domain.Day.Seconds()); err != nil {
 			return err
 		}
 	}
@@ -226,13 +215,13 @@ func rollup(tx *sql.Tx, parent, child string, from, to int64) error {
 // Prune deletes minute and hour buckets older than their retention.
 func (d *DB) Prune(now time.Time) error {
 	if d.retentionMinute > 0 {
-		if _, err := d.sql.Exec(`DELETE FROM points_1m WHERE ts < ?`,
+		if _, err := d.sql.Exec(`DELETE FROM `+domain.Minute.Table()+` WHERE ts < ?`,
 			now.Add(-d.retentionMinute).Unix()); err != nil {
 			return fmt.Errorf("prune minutes: %w", err)
 		}
 	}
 	if d.retentionHour > 0 {
-		if _, err := d.sql.Exec(`DELETE FROM points_1h WHERE ts < ?`,
+		if _, err := d.sql.Exec(`DELETE FROM `+domain.Hour.Table()+` WHERE ts < ?`,
 			now.Add(-d.retentionHour).Unix()); err != nil {
 			return fmt.Errorf("prune hours: %w", err)
 		}
@@ -242,12 +231,12 @@ func (d *DB) Prune(now time.Time) error {
 
 // History queries one aggregation table for the given series names. An empty
 // names slice returns every series of that kind.
-func (d *DB) History(kind string, names []string, from, to int64, step Step) ([]model.SeriesHistory, error) {
-	table, err := tableFor(step)
-	if err != nil {
-		return nil, err
+func (d *DB) History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error) {
+	table := res.Table()
+	if table == "" {
+		return nil, fmt.Errorf("unknown history resolution %q", res)
 	}
-	args := []any{kind}
+	args := []any{string(kind)}
 	query := fmt.Sprintf(`
 		SELECT s.kind, s.name, p.ts, p.avg, p.min, p.max, p.n
 		FROM %s p
@@ -268,11 +257,11 @@ func (d *DB) History(kind string, names []string, from, to int64, step Step) ([]
 	}
 	defer rows.Close()
 
-	var out []model.SeriesHistory
+	var out []api.SeriesHistory
 	byName := map[string]int{}
 	for rows.Next() {
 		var kind, name string
-		var p model.SeriesPoint
+		var p api.SeriesPoint
 		if err := rows.Scan(&kind, &name, &p.TS, &p.Avg, &p.Min, &p.Max, &p.N); err != nil {
 			return nil, err
 		}
@@ -280,24 +269,11 @@ func (d *DB) History(kind string, names []string, from, to int64, step Step) ([]
 		if !ok {
 			i = len(out)
 			byName[name] = i
-			out = append(out, model.SeriesHistory{Kind: kind, Name: name})
+			out = append(out, api.SeriesHistory{Kind: kind, Name: name})
 		}
 		out[i].Points = append(out[i].Points, p)
 	}
 	return out, rows.Err()
-}
-
-func tableFor(step Step) (string, error) {
-	switch step {
-	case StepMinute:
-		return "points_1m", nil
-	case StepHour:
-		return "points_1h", nil
-	case StepDay:
-		return "points_1d", nil
-	default:
-		return "", fmt.Errorf("unknown history step %q", step)
-	}
 }
 
 // LastWear returns the newest wear row for a disk, or nil when there is none.
@@ -398,14 +374,14 @@ func nullInt(v sql.NullInt64) *int64 {
 
 // seriesTx resolves the series id inside the write transaction. No in-memory
 // cache is kept: a rolled back transaction must not leave ids that do not exist.
-func seriesTx(tx *sql.Tx, kind, name string) (int64, error) {
+func seriesTx(tx *sql.Tx, kind domain.Kind, name string) (int64, error) {
 	if _, err := tx.Exec(`INSERT INTO series (kind, name) VALUES (?, ?)
-		ON CONFLICT (kind, name) DO NOTHING`, kind, name); err != nil {
+		ON CONFLICT (kind, name) DO NOTHING`, string(kind), name); err != nil {
 		return 0, err
 	}
 	var id int64
 	if err := tx.QueryRow(`SELECT id FROM series WHERE kind = ? AND name = ?`,
-		kind, name).Scan(&id); err != nil {
+		string(kind), name).Scan(&id); err != nil {
 		return 0, err
 	}
 	return id, nil
@@ -424,5 +400,3 @@ func placeholders(n int) string {
 	}
 	return string(b)
 }
-
-func mod(a, b int64) int64 { return ((a % b) + b) % b }

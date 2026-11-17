@@ -9,13 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"mon/internal/collect"
 	"mon/internal/config"
-	"mon/internal/model"
+	"mon/internal/domain"
 	"mon/internal/recorder"
 	"mon/internal/server"
 	"mon/internal/state"
@@ -190,7 +189,7 @@ func (a *App) collectTemps(ctx context.Context) error {
 	now := time.Now()
 	a.st.SetTemps(now, temps)
 	for _, t := range temps {
-		a.rec.Add(model.KindTemp, t.Key, t.Celsius)
+		a.rec.Add(domain.Temp, t.Key, t.Celsius)
 	}
 	return nil
 }
@@ -202,13 +201,13 @@ func (a *App) collectHost(ctx context.Context) error {
 		return err
 	}
 	a.st.SetHost(now, snap)
-	a.rec.Add(model.KindHostCPU, "host", snap.CPUPct)
-	a.rec.Add(model.KindHostMem, "host", snap.MemPct)
-	a.rec.Add(model.KindHostLoad1, "host", snap.Load1)
-	a.rec.Add(model.KindHostLoad5, "host", snap.Load5)
-	a.rec.Add(model.KindHostLoad15, "host", snap.Load15)
-	a.rec.Add(model.KindHostNetRx, "host", snap.NetRxBps)
-	a.rec.Add(model.KindHostNetTx, "host", snap.NetTxBps)
+	a.rec.Add(domain.HostCPU, "host", snap.CPUPct)
+	a.rec.Add(domain.HostMem, "host", snap.MemPct)
+	a.rec.Add(domain.HostLoad1, "host", snap.Load1)
+	a.rec.Add(domain.HostLoad5, "host", snap.Load5)
+	a.rec.Add(domain.HostLoad15, "host", snap.Load15)
+	a.rec.Add(domain.HostNetRx, "host", snap.NetRxBps)
+	a.rec.Add(domain.HostNetTx, "host", snap.NetTxBps)
 	return nil
 }
 
@@ -217,11 +216,11 @@ func (a *App) collectDocker(ctx context.Context) error {
 	containers, err := a.docker.Read(ctx, now)
 	a.st.SetContainers(now, containers)
 	for _, c := range containers {
-		a.rec.Add(model.KindContainerCPU, c.Name, c.CPUPct)
-		a.rec.Add(model.KindContainerMem, c.Name, float64(c.MemUsed))
-		a.rec.Add(model.KindContainerMemPct, c.Name, c.MemPct)
-		a.rec.Add(model.KindContainerNetRx, c.Name, c.NetRxBps)
-		a.rec.Add(model.KindContainerNetTx, c.Name, c.NetTxBps)
+		a.rec.Add(domain.ContainerCPU, c.Name, c.CPUPct)
+		a.rec.Add(domain.ContainerMem, c.Name, float64(c.MemUsed))
+		a.rec.Add(domain.ContainerMemPct, c.Name, c.MemPct)
+		a.rec.Add(domain.ContainerNetRx, c.Name, c.NetRxBps)
+		a.rec.Add(domain.ContainerNetTx, c.Name, c.NetTxBps)
 	}
 	return err
 }
@@ -231,14 +230,10 @@ func (a *App) collectVolumes(ctx context.Context) error {
 	volumes, err := a.volumes.Read()
 	a.st.SetVolumes(now, volumes)
 	for _, v := range volumes {
-		a.rec.Add(model.KindVolumeUsedPct, v.Name, v.UsedPct)
+		a.rec.Add(domain.VolumeUsedPct, v.Name, v.UsedPct)
 	}
 	return err
 }
-
-// wearLogTBWStep is the minimum TBW growth (0.1 TB, decimal) that deserves a
-// wear-log row. Smaller writes are accumulated between rows.
-const wearLogTBWStep = int64(100_000_000_000)
 
 func (a *App) collectSmart(ctx context.Context) error {
 	now := time.Now()
@@ -256,15 +251,17 @@ func (a *App) collectSmart(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("last wear %s: %w", d.Disk, err))
 			continue
 		}
-		appendRow, reason := shouldAppendWear(prev, d, wearLogTBWStep)
-		if !appendRow {
+		cur := diskObservation(d, now)
+		reasons := domain.Decide(previousObservation(prev), cur, domain.TBWStep)
+		if len(reasons) == 0 {
 			continue
 		}
 		w := store.Wear{
-			Disk: d.Disk, TS: now.Unix(), Model: d.Model, Serial: d.Serial,
-			PercentageUsed: d.PercentageUsed, TBWBytes: d.TBWBytes,
-			PowerOnHours: d.PowerOnHours, MediaErrors: d.MediaErrors,
-			Reallocated: d.Reallocated, TempC: d.TempC, Reason: reason,
+			Disk: cur.Disk, TS: cur.TS, Model: cur.Model, Serial: cur.Serial,
+			PercentageUsed: cur.PercentageUsed, TBWBytes: cur.TBWBytes,
+			PowerOnHours: cur.PowerOnHours, MediaErrors: cur.MediaErrors,
+			Reallocated: cur.Reallocated, TempC: cur.TempC,
+			Reason: domain.FormatReasons(reasons),
 		}
 		if err := a.db.AppendWear(w); err != nil {
 			errs = append(errs, fmt.Errorf("append wear %s: %w", d.Disk, err))
@@ -273,51 +270,27 @@ func (a *App) collectSmart(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// shouldAppendWear reports whether a wear row is worth writing. Only the first
-// observation, a drive identity change, new errors, more wear or at least
-// tbwStep of new writes qualify. Power-on hours and temperature do not: they
-// change on every poll and would turn the log into noise.
-func shouldAppendWear(prev *store.Wear, d collect.DiskSmart, tbwStep int64) (bool, string) {
-	if prev == nil {
-		return true, "first"
+// diskObservation turns a SMART reading into the domain's wear observation.
+func diskObservation(d collect.DiskSmart, at time.Time) domain.WearObservation {
+	return domain.WearObservation{
+		Disk: d.Disk, TS: at.Unix(), Model: d.Model, Serial: d.Serial,
+		PercentageUsed: d.PercentageUsed, TBWBytes: d.TBWBytes,
+		PowerOnHours: d.PowerOnHours, MediaErrors: d.MediaErrors,
+		Reallocated: d.Reallocated, TempC: d.TempC,
 	}
-	var reasons []string
-	if prev.Model != d.Model || prev.Serial != d.Serial {
-		reasons = append(reasons, "identity")
-	}
-	if increased(prev.MediaErrors, d.MediaErrors) || increased(prev.Reallocated, d.Reallocated) {
-		reasons = append(reasons, "errors")
-	}
-	if increased(prev.PercentageUsed, d.PercentageUsed) {
-		reasons = append(reasons, "wear")
-	}
-	switch {
-	case prev.TBWBytes == nil && d.TBWBytes != nil:
-		reasons = append(reasons, "tbw")
-	case prev.TBWBytes != nil && d.TBWBytes != nil:
-		delta := *d.TBWBytes - *prev.TBWBytes
-		if delta >= tbwStep {
-			reasons = append(reasons, "tbw")
-		} else if delta < 0 {
-			reasons = append(reasons, "tbw-reset")
-		}
-	}
-	if len(reasons) == 0 {
-		return false, ""
-	}
-	return true, strings.Join(reasons, "+")
 }
 
-// increased reports a counter growing or appearing with a non-zero value.
-// A drive that starts reporting zero errors is not a significant change.
-func increased(prev, cur *int64) bool {
-	if cur == nil {
-		return false
-	}
+// previousObservation turns the stored wear row into a domain observation.
+func previousObservation(prev *store.Wear) *domain.WearObservation {
 	if prev == nil {
-		return *cur > 0
+		return nil
 	}
-	return *cur > *prev
+	return &domain.WearObservation{
+		Disk: prev.Disk, TS: prev.TS, Model: prev.Model, Serial: prev.Serial,
+		PercentageUsed: prev.PercentageUsed, TBWBytes: prev.TBWBytes,
+		PowerOnHours: prev.PowerOnHours, MediaErrors: prev.MediaErrors,
+		Reallocated: prev.Reallocated, TempC: prev.TempC,
+	}
 }
 
 // flush persists every fully closed minute bucket.

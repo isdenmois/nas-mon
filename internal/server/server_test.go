@@ -10,29 +10,30 @@ import (
 	"testing"
 	"time"
 
+	"mon/internal/api"
 	"mon/internal/collect"
-	"mon/internal/model"
+	"mon/internal/domain"
 	"mon/internal/state"
 	"mon/internal/store"
 )
 
 type historyCall struct {
-	kind  string
+	kind  domain.Kind
 	names []string
 	from  int64
 	to    int64
-	step  store.Step
+	step  domain.Resolution
 }
 
 type fakeStore struct {
 	calls      []historyCall
-	histories  map[string][]model.SeriesHistory
+	histories  map[domain.Kind][]api.SeriesHistory
 	wearLatest []store.Wear
 	wearLog    []store.Wear
 	err        error
 }
 
-func (f *fakeStore) History(kind string, names []string, from, to int64, step store.Step) ([]model.SeriesHistory, error) {
+func (f *fakeStore) History(kind domain.Kind, names []string, from, to int64, step domain.Resolution) ([]api.SeriesHistory, error) {
 	f.calls = append(f.calls, historyCall{kind, names, from, to, step})
 	return f.histories[kind], f.err
 }
@@ -103,8 +104,8 @@ func TestOverview(t *testing.T) {
 
 func TestHistoryRangeAndGrouping(t *testing.T) {
 	now := time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC)
-	db := &fakeStore{histories: map[string][]model.SeriesHistory{
-		model.KindTemp: {{Kind: model.KindTemp, Name: "a", Points: []model.SeriesPoint{{TS: 1, Avg: 40}}}},
+	db := &fakeStore{histories: map[domain.Kind][]api.SeriesHistory{
+		domain.Temp: {{Kind: "temp", Name: "a", Points: []api.SeriesPoint{{TS: 1, Avg: 40}}}},
 	}}
 	st := state.New()
 	s, h := testServer(t, st, db)
@@ -118,8 +119,8 @@ func TestHistoryRangeAndGrouping(t *testing.T) {
 		t.Fatalf("calls = %+v", db.calls)
 	}
 	tempCall := db.calls[0]
-	if tempCall.kind != model.KindTemp || strings.Join(tempCall.names, ",") != "a,b" ||
-		tempCall.step != store.StepHour {
+	if tempCall.kind != domain.Temp || strings.Join(tempCall.names, ",") != "a,b" ||
+		tempCall.step != domain.Hour {
 		t.Errorf("temp call = %+v", tempCall)
 	}
 	wantFrom := now.Add(-7 * 24 * time.Hour).Unix()
@@ -127,13 +128,13 @@ func TestHistoryRangeAndGrouping(t *testing.T) {
 	if tempCall.from != wantFrom || tempCall.to != now.Unix() {
 		t.Errorf("window = %d..%d, want %d..%d", tempCall.from, tempCall.to, wantFrom, now.Unix())
 	}
-	if db.calls[1].kind != model.KindHostCPU {
+	if db.calls[1].kind != domain.HostCPU {
 		t.Errorf("second call = %+v", db.calls[1])
 	}
 
 	resp := decode[struct {
-		Step   string                `json:"step"`
-		Series []model.SeriesHistory `json:"series"`
+		Step   string              `json:"step"`
+		Series []api.SeriesHistory `json:"series"`
 	}](t, rec)
 	if resp.Step != "hour" || len(resp.Series) != 1 || resp.Series[0].Points[0].Avg != 40 {
 		t.Errorf("response = %+v", resp)
@@ -161,27 +162,6 @@ func TestHistoryStoreError(t *testing.T) {
 	_, h := testServer(t, state.New(), db)
 	if rec := get(h, "/api/history?range=1h&series=temp:a"); rec.Code != 500 {
 		t.Errorf("status = %d", rec.Code)
-	}
-}
-
-func TestResolveRange(t *testing.T) {
-	now := time.Date(2026, 3, 4, 12, 34, 56, 0, time.UTC)
-	cases := map[string]store.Step{
-		"1h": store.StepMinute, "6h": store.StepMinute, "24h": store.StepMinute,
-		"48h": store.StepMinute, "7d": store.StepHour, "30d": store.StepHour,
-		"90d": store.StepHour, "1y": store.StepDay, "all": store.StepDay,
-	}
-	for raw, want := range cases {
-		from, to, step, err := resolveRange(raw, now)
-		if err != nil || step != want || to != now.Unix() {
-			t.Errorf("%s: from=%d to=%d step=%v err=%v", raw, from, to, step, err)
-		}
-		if raw == "all" && from != 0 {
-			t.Errorf("all: from = %d", from)
-		}
-		if raw != "all" && (from > to || from%stepSeconds(step) != 0) {
-			t.Errorf("%s: bad from %d", raw, from)
-		}
 	}
 }
 

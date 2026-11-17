@@ -4,7 +4,6 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -12,14 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"mon/internal/model"
+	"mon/internal/api"
+	"mon/internal/domain"
 	"mon/internal/state"
 	"mon/internal/store"
 )
 
 // Store is the subset of the SQLite store used by HTTP handlers.
 type Store interface {
-	History(kind string, names []string, from, to int64, step store.Step) ([]model.SeriesHistory, error)
+	History(kind domain.Kind, names []string, from, to int64, res domain.Resolution) ([]api.SeriesHistory, error)
 	WearLatest() ([]store.Wear, error)
 	WearLog(limit int) ([]store.Wear, error)
 }
@@ -73,15 +73,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing series parameter")
 		return
 	}
-	groups := map[string][]string{}
-	var order []string
+	groups := map[domain.Kind][]string{}
+	var order []domain.Kind
 	for _, item := range raw {
 		for _, part := range strings.Split(item, ",") {
-			kind, name, ok := strings.Cut(strings.TrimSpace(part), ":")
-			if !ok || kind == "" || name == "" {
+			kindRaw, name, ok := strings.Cut(strings.TrimSpace(part), ":")
+			if !ok || kindRaw == "" || name == "" {
 				writeError(w, http.StatusBadRequest, "series must look like kind:name")
 				return
 			}
+			kind := domain.Kind(kindRaw)
 			if _, seen := groups[kind]; !seen {
 				order = append(order, kind)
 			}
@@ -89,15 +90,20 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	from, to, step, err := resolveRange(r.URL.Query().Get("range"), s.now())
+	key, err := domain.ParseRange(r.URL.Query().Get("range"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	window, err := key.Resolve(s.now().Unix())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	out := make([]model.SeriesHistory, 0, len(raw))
+	out := make([]api.SeriesHistory, 0, len(raw))
 	for _, kind := range order {
-		h, err := s.store.History(kind, groups[kind], from, to, step)
+		h, err := s.store.History(kind, groups[kind], window.From, window.To, window.Resolution)
 		if err != nil {
 			s.log.Warn("history query failed", "kind", kind, "err", err)
 			writeError(w, http.StatusInternalServerError, "history query failed")
@@ -106,9 +112,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		out = append(out, h...)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"step":   step,
-		"from":   from,
-		"to":     to,
+		"step":   api.Step(window.Resolution.String()),
+		"from":   window.From,
+		"to":     window.To,
 		"series": out,
 	})
 }
@@ -136,45 +142,6 @@ func (s *Server) handleWear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"latest": latest, "log": log})
-}
-
-// resolveRange maps a UI range preset to a time window and aggregation table.
-func resolveRange(raw string, now time.Time) (from, to int64, step store.Step, err error) {
-	to = now.Unix()
-	switch raw {
-	case "1h", "6h", "24h", "48h":
-		step = store.StepMinute
-	case "7d", "30d", "90d":
-		step = store.StepHour
-	case "1y", "all":
-		step = store.StepDay
-	default:
-		return 0, 0, "", errors.New("range must be one of 1h, 6h, 24h, 48h, 7d, 30d, 90d, 1y, all")
-	}
-	windows := map[string]time.Duration{
-		"1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour,
-		"48h": 48 * time.Hour, "7d": 7 * 24 * time.Hour,
-		"30d": 30 * 24 * time.Hour, "90d": 90 * 24 * time.Hour,
-		"1y": 365 * 24 * time.Hour,
-	}
-	if raw == "all" {
-		from = 0
-	} else {
-		from = to - int64(windows[raw].Seconds())
-	}
-	from -= from % int64(stepSeconds(step))
-	return from, to, step, nil
-}
-
-func stepSeconds(step store.Step) int64 {
-	switch step {
-	case store.StepMinute:
-		return 60
-	case store.StepHour:
-		return 3600
-	default:
-		return 86400
-	}
 }
 
 func (s *Server) staticHandler() http.Handler {

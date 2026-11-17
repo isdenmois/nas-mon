@@ -6,17 +6,17 @@ import (
 	"sync"
 	"time"
 
-	"mon/internal/model"
+	"mon/internal/domain"
 )
 
 type key struct {
-	kind string
+	kind domain.Kind
 	name string
 	ts   int64
 }
 
 type bucket struct {
-	kind      string
+	kind      domain.Kind
 	name      string
 	ts        int64
 	sum, minV float64
@@ -37,13 +37,18 @@ func New() *Recorder {
 }
 
 // Add records a sample at the current time.
-func (r *Recorder) Add(kind, name string, value float64) {
-	r.AddAt(kind, name, value, r.now())
+func (r *Recorder) Add(kind domain.Kind, name string, value float64) bool {
+	return r.AddAt(kind, name, value, r.now())
 }
 
-// AddAt records a sample at ts (truncated to its minute).
-func (r *Recorder) AddAt(kind, name string, value float64, ts time.Time) {
-	start := ts.Unix() - ts.Unix()%60
+// AddAt records a sample at ts (truncated to its minute). Non-finite values are
+// rejected at this boundary and never reach a bucket.
+func (r *Recorder) AddAt(kind domain.Kind, name string, value float64, ts time.Time) bool {
+	value, ok := domain.Sanitize(value)
+	if !ok {
+		return false
+	}
+	start := domain.Minute.Bucket(ts.Unix())
 	k := key{kind: kind, name: name, ts: start}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,21 +65,22 @@ func (r *Recorder) AddAt(kind, name string, value float64, ts time.Time) {
 		b.maxV = value
 	}
 	b.n++
+	return true
 }
 
 // CollectCompleted removes and returns every bucket that is fully closed at
 // now. Buckets are intentionally not flushed partially: losing the last few
 // seconds on shutdown is preferable to publishing skewed averages.
-func (r *Recorder) CollectCompleted(now time.Time) []model.Point {
-	current := now.Unix() - now.Unix()%60
+func (r *Recorder) CollectCompleted(now time.Time) []domain.Point {
+	current := domain.Minute.Bucket(now.Unix())
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []model.Point
+	var out []domain.Point
 	for k, b := range r.buckets {
 		if b.ts >= current {
 			continue
 		}
-		out = append(out, model.Point{
+		out = append(out, domain.Point{
 			Kind: b.kind, Name: b.name, TS: b.ts,
 			Avg: b.sum / float64(b.n), Min: b.minV, Max: b.maxV, N: b.n,
 		})

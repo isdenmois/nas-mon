@@ -256,8 +256,9 @@ func TestHealthAndStatic(t *testing.T) {
 	if rec := get(h, "/healthz"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Errorf("health = %d %s", rec.Code, rec.Body)
 	}
-	if rec := get(h, "/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "frontend") {
-		t.Errorf("index = %d %q", rec.Code, rec.Body.String())
+	if rec := get(h, "/"); rec.Code != 200 ||
+		!strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("index = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 	if rec := get(h, "/some/spa/route"); rec.Code != 200 {
 		t.Errorf("spa fallback = %d", rec.Code)

@@ -128,6 +128,9 @@ func (h Hwmon) selectSensors(chip, disk string, sensors []sensor) []sensor {
 				return []sensor{s}
 			}
 		}
+		if len(sensors) > 0 {
+			return sensors[:1]
+		}
 	case cpuChips[chip]:
 		// Prefer Tctl (AMD) then Tdie, else the lowest-index sensor.
 		for _, want := range []string{"Tctl", "Tdie"} {

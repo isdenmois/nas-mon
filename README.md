@@ -68,8 +68,14 @@ healthcheck: `/healthz`.
 | `MON_DOCKER_SOCKET` | `/var/run/docker.sock` | путь к сокету Docker |
 | `MON_VOLUMES_DIR` | `/volumes` | каталог с монтируемыми ФС |
 
-В `compose.yaml` значения пробрасываются из окружения/`.env`, например
-`MON_TEMP_INTERVAL=5s docker compose up -d`.
+В `compose.yaml` значения пробрасываются из окружения/`.env`:
+
+```sh
+cp .env.example .env   # поправить интервалы
+docker compose up -d --build
+```
+
+или разово: `MON_TEMP_INTERVAL=5s docker compose up -d`.
 
 ### Выбор датчиков
 

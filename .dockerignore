@@ -4,3 +4,4 @@ data
 web/node_modules
 internal/server/dist
 *.db
+.env

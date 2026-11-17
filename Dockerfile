@@ -2,9 +2,8 @@
 
 FROM node:24-alpine AS web
 WORKDIR /src/web
-COPY web/package.json web/package-lock.json* ./
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY web/ ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 RUN npm run build
 
 FROM golang:1.27-alpine AS build

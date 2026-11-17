@@ -149,16 +149,16 @@ scrape_configs:
 
 ## Разработка
 
-Нужны Go 1.27+ и Bun 1.4+.
+Нужны Go 1.27+, Bun 1.4+ и [just](https://github.com/casey/just).
 
 ```sh
 bun install  # зависимости фронтенда и e2e
-make web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
-make test    # go test ./...
-make vet
-make build   # bin/mon
-make docker  # docker compose up -d --build
-make e2e     # Playwright: UI-сценарии на замоканном API
+just web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
+just test    # go test ./...
+just vet
+just build   # bin/mon
+just docker  # docker compose up -d --build
+just e2e     # Playwright: UI-сценарии на замоканном API
 ```
 
 `go build` без фронтенда тоже работает: в `internal/server/dist/index.html`
@@ -176,7 +176,7 @@ Playwright поднимает Vite dev server и перехватывает вс
 
 ```sh
 bunx playwright install chromium  # один раз
-bun run test:e2e                  # или make e2e из корня
+bun run test:e2e                  # или just e2e из корня
 bun run test:e2e:update           # перегенерировать эталоны графиков
 ```
 

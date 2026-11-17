@@ -1,11 +1,8 @@
-name: mon
-
 services:
   mon:
     build:
       context: .
-    image: mon:latest
-    container_name: mon
+    container_name: nas-mon
     restart: unless-stopped
 
     # smartctl needs raw device access and the Docker socket is root-equivalent

@@ -20,7 +20,9 @@ function statusOf(status: CollectorStatus): State {
 
 function title(name: string, status: CollectorStatus): string {
   const head = status.last_error ? `${name}: ${status.last_error}` : `${name}: ${statusOf(status)}`
-  return status.last_success ? `${head}\nLast success: ${formatDateTime(status.last_success)}` : head
+  return status.last_success
+    ? `${head}\nLast success: ${formatDateTime(status.last_success)}`
+    : head
 }
 
 function toggle(name: string): void {

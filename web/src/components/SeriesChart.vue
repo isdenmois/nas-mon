@@ -14,7 +14,15 @@ import {
 import { formatAxis, formatValue, type ValueFormat } from '../format'
 import type { ChartSeries, RangeKey } from '../types'
 
-Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend)
+Chart.register(
+  LineController,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend,
+)
 
 const props = withDefaults(
   defineProps<{
@@ -33,7 +41,16 @@ const props = withDefaults(
   },
 )
 
-const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#22d3ee', '#facc15']
+const palette = [
+  '#60a5fa',
+  '#f472b6',
+  '#34d399',
+  '#fbbf24',
+  '#a78bfa',
+  '#f87171',
+  '#22d3ee',
+  '#facc15',
+]
 
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
@@ -103,7 +120,8 @@ function draw(): void {
         },
         tooltip: {
           callbacks: {
-            label: (ctx) => `${ctx.dataset.label ?? ''}: ${formatValue(Number(ctx.parsed.y), props.format)}`,
+            label: (ctx) =>
+              `${ctx.dataset.label ?? ''}: ${formatValue(Number(ctx.parsed.y), props.format)}`,
           },
         },
       },

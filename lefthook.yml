@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://lefthook.dev/schema.json
+
+pre-commit:
+  piped: true
+  jobs:
+    - name: format
+      run: bun run format
+      stage_fixed: true
+    - name: lint
+      run: bun run lint
+    - name: typecheck
+      run: bun run typecheck
+    - name: unit tests
+      run: go test ./...
+
+pre-push:
+  jobs:
+    - name: e2e tests
+      run: bun run test:e2e

@@ -15,7 +15,16 @@ import SeriesChart from './SeriesChart.vue'
 const props = defineProps<{ smart: DiskSmart[]; error?: string }>()
 const emit = defineEmits<{ error: [message: string] }>()
 
-const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#22d3ee', '#facc15']
+const palette = [
+  '#60a5fa',
+  '#f472b6',
+  '#34d399',
+  '#fbbf24',
+  '#a78bfa',
+  '#f87171',
+  '#22d3ee',
+  '#facc15',
+]
 
 const wear = ref<WearResponse | null>(null)
 const loading = ref(false)
@@ -64,9 +73,7 @@ const tbwDatasets = computed<ChartSeries[]>(() => {
     .map(([disk, points], index) => ({
       label: disk,
       color: palette[index % palette.length],
-      points: [...points.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([ts, value]) => ({ ts, value })),
+      points: [...points.entries()].sort(([a], [b]) => a - b).map(([ts, value]) => ({ ts, value })),
     }))
 })
 
@@ -105,9 +112,12 @@ async function loadWear(): Promise<void> {
 onMounted(() => {
   void loadWear()
   // SMART rows change at most once per MON_SMART_INTERVAL (12h by default).
-  timer = setInterval(() => {
-    void loadWear()
-  }, 12 * 60 * 60_000)
+  timer = setInterval(
+    () => {
+      void loadWear()
+    },
+    12 * 60 * 60_000,
+  )
 })
 
 onBeforeUnmount(() => {

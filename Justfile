@@ -6,6 +6,18 @@ default:
 e2e:
     bun run test:e2e
 
+# Lint and check formatting with Biome
+lint:
+    bun run lint
+
+# Format frontend sources with Biome
+format:
+    bun run format
+
+# Install Lefthook git hooks
+install-hooks:
+    bunx lefthook install
+
 # Install web dependencies and build into internal/server/dist
 web:
     bun install --frozen-lockfile

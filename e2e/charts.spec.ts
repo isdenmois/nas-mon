@@ -11,8 +11,10 @@ const smartPanel = (page: Page): Locator =>
   page.locator('section[aria-labelledby="smart-history-title"]')
 
 async function lastTempSeries(calls: Awaited<ReturnType<typeof mockApi>>): Promise<string[]> {
-  return calls.history.filter((call) => call.series.some((item) => item.startsWith('temp:'))).at(-1)
-    ?.series ?? []
+  return (
+    calls.history.filter((call) => call.series.some((item) => item.startsWith('temp:'))).at(-1)
+      ?.series ?? []
+  )
 }
 
 test.beforeEach(async ({ page }) => {
@@ -39,9 +41,7 @@ test('deep link renders every history panel from the API', async ({ page }) => {
   await expect(containerPanel(page).locator('canvas')).toHaveCount(3)
 
   expect(calls.wear).toBeGreaterThan(0)
-  expect(
-    calls.history.some((call) => call.series.includes('container_cpu:jellyfin')),
-  ).toBe(true)
+  expect(calls.history.some((call) => call.series.includes('container_cpu:jellyfin'))).toBe(true)
 })
 
 test('switching the range refetches the chart', async ({ page }) => {
@@ -68,9 +68,7 @@ test('temperature checkboxes choose which series are charted', async ({ page }) 
 
   const sensors = tempPanel(page).getByRole('checkbox')
   await expect(sensors).toHaveCount(3)
-  await expect
-    .poll(async () => (await lastTempSeries(calls)).length)
-    .toBe(3)
+  await expect.poll(async () => (await lastTempSeries(calls)).length).toBe(3)
 
   await sensors.nth(0).uncheck()
   await sensors.nth(1).uncheck()
@@ -80,9 +78,7 @@ test('temperature checkboxes choose which series are charted', async ({ page }) 
   await expect(tempPanel(page).locator('canvas')).toBeHidden()
 
   await sensors.nth(0).check()
-  await expect
-    .poll(async () => lastTempSeries(calls))
-    .toEqual(['temp:k10temp:Tctl'])
+  await expect.poll(async () => lastTempSeries(calls)).toEqual(['temp:k10temp:Tctl'])
   await expect(tempPanel(page).locator('canvas')).toHaveAttribute(
     'aria-label',
     'History chart for k10temp · Tctl',

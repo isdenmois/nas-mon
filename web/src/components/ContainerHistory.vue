@@ -10,7 +10,16 @@ const range = ref<RangeKey>('24h')
 const selected = ref<string[]>([])
 let selectionInitialized = false
 
-const palette = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#f87171', '#22d3ee', '#facc15']
+const palette = [
+  '#60a5fa',
+  '#f472b6',
+  '#34d399',
+  '#fbbf24',
+  '#a78bfa',
+  '#f87171',
+  '#22d3ee',
+  '#facc15',
+]
 const names = computed(() => props.containers.map((container) => container.name))
 
 watch(
@@ -31,7 +40,7 @@ watch(
 
 function colorFor(name: string): string {
   const index = names.value.indexOf(name)
-  return palette[(index < 0 ? 0 : index) % palette.length]
+  return palette[Math.max(index, 0) % palette.length]
 }
 
 function seriesFor(kind: string): HistorySeries[] {

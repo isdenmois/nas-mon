@@ -153,12 +153,14 @@ scrape_configs:
 
 ```sh
 bun install  # зависимости фронтенда и e2e
+just install-hooks  # установить git-хуки (один раз)
 just web     # bun install + vite build -> internal/server/dist (вшивается в бинарь)
 just test    # go test ./...
 just vet
 just build   # bin/mon
 just docker  # docker compose up -d --build
 just e2e     # Playwright: UI-сценарии на замоканном API
+just lint    # Biome: линт и проверка форматирования
 ```
 
 `go build` без фронтенда тоже работает: в `internal/server/dist/index.html`
@@ -167,6 +169,32 @@ just e2e     # Playwright: UI-сценарии на замоканном API
 ```sh
 MON_DB_PATH=./data/mon.db MON_SMART_INTERVAL=0 go run ./cmd/mon
 ```
+
+### Линтинг фронтенда
+
+Biome проверяет `web/`, `e2e/`, `playwright.config.ts` и `package.json`.
+
+```sh
+just lint        # biome check: линт + форматирование
+bun run lint:fix # автоисправления
+just format      # переформатировать файлы
+```
+
+В `.vue`-файлах отключены `noUnusedImports` и `noUnusedVariables`: Biome пока
+не видит использования из шаблона, эти проверки покрывает `vue-tsc`.
+
+### Git-хуки
+
+Хуки настраиваются через [Lefthook](https://lefthook.dev/) (`lefthook.yml`).
+После клонирования репозитория:
+
+```sh
+just install-hooks   # bunx lefthook install
+```
+
+`pre-commit` последовательно форматирует и линтит фронтенд, проверяет типы и
+запускает Go-тесты. `pre-push` прогоняет Playwright e2e. Пропустить хуки можно
+через `LEFTHOOK=0 git commit ...` или `LEFTHOOK=0 git push`.
 
 ### E2E-тесты
 

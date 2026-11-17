@@ -120,18 +120,12 @@ test('navigates between overview and charts', async ({ page }) => {
   await expect(page).toHaveURL(/\/charts$/)
   await expect(page).toHaveTitle('mon · charts')
   await expect(page.getByRole('heading', { name: 'Temperature history' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Charts' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  await expect(page.getByRole('link', { name: 'Charts' })).toHaveAttribute('aria-current', 'page')
 
   await page.getByRole('link', { name: 'Overview' }).click()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('heading', { name: 'Temperatures' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  await expect(page.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
 
   await page.goBack()
   await expect(page).toHaveURL(/\/charts$/)

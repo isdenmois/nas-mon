@@ -130,6 +130,21 @@ error either way.
 `scripts/bench-cpu.sh idle 120` on a box with no dockerd and no hwmon measures
 less than the 10 ms resolution of `wait4` rusage, i.e. **under 0.01% of a core**.
 
+### The dashboard is the expensive part
+
+`BenchmarkHistory24h` measures one charts-page request: 24 hours at minute
+resolution for 25 series.
+
+| | value |
+|---|---|
+| one /api/history request | **32 ms**, 10.4 MB allocated, 432 k allocs |
+| charts page (8 requests/min) | **256 ms/min = 15 s/h** |
+
+For comparison the whole background costs under 0.1 s/h. A visible charts tab
+is therefore ~17x more expensive than every collector and flush combined --
+which is why the tab pauses itself when hidden, and why any further CPU work
+belongs here, not in the loops.
+
 ### Per-tick costs, measured
 
 Benchmarks turn a profile into arithmetic. Frequencies are the defaults:

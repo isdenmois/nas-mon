@@ -104,3 +104,31 @@ func BenchmarkPruneDay(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkHistory24h is one charts-page request: 24 hours at minute
+// resolution for 25 series (the container panels), the shape a single open
+// dashboard tab asks for eight times a minute.
+func BenchmarkHistory24h(b *testing.B) {
+	db := benchDB(b, Retention{})
+	base := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC).Unix()
+	for m := 0; m < 24*60; m++ {
+		if err := db.InsertMinute(pointsFor(base + int64(m)*60)); err != nil {
+			b.Fatalf("seed: %v", err)
+		}
+	}
+	ids := make([]int64, 0, 25)
+	for i := 1; i <= 25; i++ {
+		ids = append(ids, int64(i))
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		got, err := db.History(ids, base, base+24*3600, domain.Minute)
+		if err != nil {
+			b.Fatalf("history: %v", err)
+		}
+		if len(got) != 25 {
+			b.Fatalf("series = %d, want 25", len(got))
+		}
+	}
+}

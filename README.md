@@ -77,6 +77,7 @@ docker compose up -d --build
 | `MON_PPROF_ADDR` | пусто | адрес профайлера, только loopback (например `127.0.0.1:6061`); пусто — выключен |
 | `MON_DOCKER_SOCKET` | `/var/run/docker.sock` | путь к сокету Docker |
 | `MON_VOLUMES_DIR` | `/volumes` | каталог с монтируемыми ФС |
+| `GOMAXPROCS` | `2` | размер планировщика Go; без лимита CPU в cgroup Go берёт все ядра хоста |
 
 В `compose.yaml` значения пробрасываются из окружения/`.env`:
 

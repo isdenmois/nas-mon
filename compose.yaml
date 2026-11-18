@@ -44,6 +44,11 @@ services:
       MON_DOCKER_EXCLUDE: "${MON_DOCKER_EXCLUDE:-}"
       MON_LOG_LEVEL: "${MON_LOG_LEVEL:-info}"
       MON_PPROF_ADDR: "${MON_PPROF_ADDR:-}"
+      # The monitor is I/O bound and idles at ~0.04% of a core. Without a
+      # cgroup CPU limit Go sizes the scheduler for the whole host, which costs
+      # threads and futex churn for no work. Two Ps leave room for the HTTP
+      # handler while keeping the runtime small.
+      GOMAXPROCS: "${GOMAXPROCS:-2}"
 
     healthcheck:
       test:

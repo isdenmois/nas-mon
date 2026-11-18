@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -123,7 +124,8 @@ func (a *App) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		a.log.Info("listening", "addr", a.cfg.Addr(), "db", a.cfg.DBPath)
+		a.log.Info("listening", "addr", a.cfg.Addr(), "db", a.cfg.DBPath,
+			"gomaxprocs", runtime.GOMAXPROCS(0))
 		err := a.http.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err

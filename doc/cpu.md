@@ -83,6 +83,43 @@ To split the remainder by syscall, run on the host:
 strace -c -f -p $(docker inspect -f '{{.State.Pid}}' nas-mon)   # 60s, then Ctrl-C
 ```
 
+### Reading an `strace -c` of an idle process
+
+`strace -c` reports **time spent in syscalls**, including waiting, so on an idle
+daemon it is dominated by things that cost no CPU:
+
+| syscall | share | what it is |
+|---|---|---|
+| `futex` | 80% | Go parking and unparking OS threads |
+| `nanosleep` | 8% | runtime `sysmon`, which wakes on a fixed ~10 ms loop |
+| `epoll_pwait` | 7% | the network poller waiting for the next request |
+| `pwrite64`/`pread64`/`read`/`write` | 0.4% | SQLite WAL pages, Docker socket, `/proc` and `/sys` |
+
+Only the last row is CPU-shaped, and that is the row the two store passes cut.
+The first three say the process is *idle and healthy*: one `futex` per thread
+park is how a Go program waits.
+
+### Scheduler size
+
+`strace` also shows 19 OS threads for a monitor using 0.04% of a core. Without
+a cgroup CPU limit (this compose file sets none), Go 1.25+ sizes `GOMAXPROCS`
+from the **host's** core count, so a container on a big NAS builds a runtime for
+the whole machine. Measured on a 16-core box:
+
+| `GOMAXPROCS` | OS threads after startup (3 runs) |
+|---|---|
+| 16 (default here) | 10, 10, 10 |
+| 2 | 8, 8, 7 |
+| 1 | 7, 7, 7 |
+
+`compose.yaml` therefore pins `GOMAXPROCS=2`: enough for the HTTP handler while
+a collector is blocked, small enough to keep GC workers and spinning scheduler
+threads down. It is logged on startup (`gomaxprocs=2`), so a profile can always
+confirm what took effect. The saving here is modest (10 → 8 threads); on a
+bigger NAS with more cores it is larger, and the next `pprof`/`strace` decides
+whether `1` is better still.
+
+
 
 That is 0.014% of one core originally and 0.0008% now, on this CPU. A NAS core
 is slower, but the order of magnitude does not change: the store is a rounding

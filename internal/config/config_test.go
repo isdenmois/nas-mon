@@ -18,10 +18,13 @@ func TestDefaults(t *testing.T) {
 	if c.Port != 8090 || c.Addr() != ":8090" {
 		t.Errorf("port = %d addr = %q", c.Port, c.Addr())
 	}
-	if c.TempInterval != 10*time.Second || c.DockerInterval != 15*time.Second ||
-		c.HostInterval != 15*time.Second || c.VolumeInterval != time.Minute ||
-		c.SmartInterval != 12*time.Hour || c.AggregateInterval != time.Minute {
+	if c.TempInterval != 30*time.Second || c.DockerInterval != time.Minute ||
+		c.HostInterval != 30*time.Second || c.VolumeInterval != 5*time.Minute ||
+		c.SmartInterval != 12*time.Hour || c.AggregateInterval != 5*time.Minute {
 		t.Errorf("unexpected intervals: %+v", c)
+	}
+	if c.PprofAddr != "" {
+		t.Errorf("pprof addr = %q, want disabled by default", c.PprofAddr)
 	}
 	if c.RetentionMinute != 48*time.Hour || c.RetentionHour != 90*24*time.Hour {
 		t.Errorf("unexpected retention: %v %v", c.RetentionMinute, c.RetentionHour)
@@ -96,6 +99,25 @@ func TestInvalidValuesReportVariable(t *testing.T) {
 		_, err := FromEnv(env(e))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("env %s: err = %v, want mention of %s", want, err, want)
+		}
+	}
+}
+
+func TestPprofAddrMustBeLoopback(t *testing.T) {
+	for _, raw := range []string{"127.0.0.1:6061", "localhost:6061", "[::1]:6061"} {
+		c, err := FromEnv(env(map[string]string{"MON_PPROF_ADDR": raw}))
+		if err != nil {
+			t.Errorf("MON_PPROF_ADDR=%q: %v", raw, err)
+			continue
+		}
+		if c.PprofAddr != raw {
+			t.Errorf("MON_PPROF_ADDR=%q became %q", raw, c.PprofAddr)
+		}
+	}
+	for _, raw := range []string{"6061", "0.0.0.0:6061", "192.168.1.5:6061", ":6061"} {
+		if _, err := FromEnv(env(map[string]string{"MON_PPROF_ADDR": raw})); err == nil ||
+			!strings.Contains(err.Error(), "MON_PPROF_ADDR") {
+			t.Errorf("MON_PPROF_ADDR=%q: err = %v, want mention of MON_PPROF_ADDR", raw, err)
 		}
 	}
 }

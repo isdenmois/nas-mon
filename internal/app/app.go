@@ -239,6 +239,11 @@ func (a *App) aggregateLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// A stop must not drop the closed buckets that accumulated since the
+			// last tick: with a long aggregate interval that is real history.
+			if err := a.flush(time.Now()); err != nil {
+				a.log.Error("store aggregates on shutdown", "err", err)
+			}
 			return
 		case <-ticker.C:
 			if err := a.flush(time.Now()); err != nil {

@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,18 +17,21 @@ const (
 	DefaultDBPath            = "/data/mon.db"
 	DefaultDockerSocket      = "/var/run/docker.sock"
 	DefaultVolumesDir        = "/volumes"
-	DefaultTempInterval      = 10 * time.Second
-	DefaultDockerInterval    = 15 * time.Second
-	DefaultHostInterval      = 15 * time.Second
-	DefaultVolumeInterval    = 60 * time.Second
+	DefaultTempInterval      = 30 * time.Second
+	DefaultDockerInterval    = time.Minute
+	DefaultHostInterval      = 30 * time.Second
+	DefaultVolumeInterval    = 5 * time.Minute
 	DefaultSmartInterval     = 12 * time.Hour
-	DefaultAggregateInterval = time.Minute
+	DefaultAggregateInterval = 5 * time.Minute
 	DefaultRetentionMinute   = 48 * time.Hour
 	DefaultRetentionHour     = 90 * 24 * time.Hour
 	DefaultRetentionDay      = 5 * 365 * 24 * time.Hour
 	DefaultRetentionWear     = 2 * 365 * 24 * time.Hour
 	DefaultTempWarnC         = 80.0
 	DefaultLogLevel          = "info"
+
+	// DefaultPprofAddr is empty: the profiler is opt-in and never on the public port.
+	DefaultPprofAddr = ""
 )
 
 // Config is the validated runtime configuration.
@@ -51,6 +55,7 @@ type Config struct {
 	TempExclude       *regexp.Regexp
 	DockerExclude     *regexp.Regexp
 	LogLevel          string
+	PprofAddr         string
 }
 
 // Addr returns the listen address for the HTTP server.
@@ -76,6 +81,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		RetentionWear:     DefaultRetentionWear,
 		TempWarnC:         DefaultTempWarnC,
 		LogLevel:          DefaultLogLevel,
+		PprofAddr:         DefaultPprofAddr,
 	}
 
 	var errs []error
@@ -139,6 +145,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	setRegexp("MON_TEMP_EXCLUDE", &c.TempExclude)
 	setRegexp("MON_DOCKER_EXCLUDE", &c.DockerExclude)
 	setStr("MON_LOG_LEVEL", &c.LogLevel)
+	setStr("MON_PPROF_ADDR", &c.PprofAddr)
 
 	if raw := strings.TrimSpace(getenv("MON_TEMP_WARN_C")); raw != "" {
 		v, err := strconv.ParseFloat(raw, 64)
@@ -153,6 +160,9 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	}
 	if c.RetentionMinute < 0 || c.RetentionHour < 0 || c.RetentionDay < 0 || c.RetentionWear < 0 {
 		errs = append(errs, errors.New("MON_RETENTION_MINUTE, MON_RETENTION_HOUR, MON_RETENTION_DAY and MON_RETENTION_WEAR must not be negative (0 keeps data forever)"))
+	}
+	if c.PprofAddr != "" && !isLoopbackAddr(c.PprofAddr) {
+		errs = append(errs, fmt.Errorf("MON_PPROF_ADDR: want a loopback address such as 127.0.0.1:6061, got %q", c.PprofAddr))
 	}
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
@@ -176,4 +186,19 @@ func parseDuration(raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("duration must not be negative: %q", raw)
 	}
 	return d, nil
+}
+
+// isLoopbackAddr reports whether addr listens only on the loopback interface.
+// The profiler exposes goroutine, heap and CPU internals, so it must never be
+// reachable from the LAN.
+func isLoopbackAddr(addr string) bool {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

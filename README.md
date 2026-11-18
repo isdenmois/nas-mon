@@ -59,12 +59,12 @@ docker compose up -d --build
 |---|---|---|
 | `MON_PORT` | `8090` | HTTP-порт на хосте (контейнер в `network_mode: host`) |
 | `MON_DB_PATH` | `/data/mon.db` | файл SQLite |
-| `MON_TEMP_INTERVAL` | `10s` | hwmon-температуры |
-| `MON_DOCKER_INTERVAL` | `15s` | контейнеры: CPU, RAM, сеть |
-| `MON_HOST_INTERVAL` | `15s` | CPU, RAM, load, сеть хоста |
-| `MON_VOLUME_INTERVAL` | `60s` | занятость ФС в `/volumes` |
+| `MON_TEMP_INTERVAL` | `30s` | hwmon-температуры |
+| `MON_DOCKER_INTERVAL` | `60s` | контейнеры: CPU, RAM, сеть |
+| `MON_HOST_INTERVAL` | `30s` | CPU, RAM, load, сеть хоста |
+| `MON_VOLUME_INTERVAL` | `5m` | занятость ФС в `/volumes` |
 | `MON_SMART_INTERVAL` | `12h` | SMART и лог износа |
-| `MON_AGGREGATE_INTERVAL` | `1m` | как часто закрытые минутки пишутся в БД |
+| `MON_AGGREGATE_INTERVAL` | `5m` | как часто закрытые минутки пишутся в БД |
 | `MON_RETENTION_MINUTE` | `48h` | хранение минуток (`0` — вечно) |
 | `MON_RETENTION_HOUR` | `2160h` (90 д) | хранение часовых (`0` — вечно) |
 | `MON_RETENTION_DAY` | `43800h` (5 лет) | хранение суточных (`0` — вечно) |
@@ -74,6 +74,7 @@ docker compose up -d --build
 | `MON_TEMP_EXCLUDE` | пусто | regex-исключение, применяется всегда |
 | `MON_DOCKER_EXCLUDE` | пусто | regex по имени контейнера |
 | `MON_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `MON_PPROF_ADDR` | пусто | адрес профайлера, только loopback (например `127.0.0.1:6061`); пусто — выключен |
 | `MON_DOCKER_SOCKET` | `/var/run/docker.sock` | путь к сокету Docker |
 | `MON_VOLUMES_DIR` | `/volumes` | каталог с монтируемыми ФС |
 
@@ -110,11 +111,12 @@ MON_TEMP_INCLUDE='k10temp:|nvme:'
 | `points_day` | свёртка часов | 5 лет |
 | `wear_log` | износ SSD: `percentage_used`, TBW, часы, ошибки | вечно |
 
-Схема версионируется goose (`internal/store/migrations`); таблицы предыдущей
-версии не совместимы, старый `mon.db` нужно удалить.
+Схема версионируется goose (`internal/store/migrations`): при старте
+применяются недостающие миграции, существующий `mon.db` обновляется на месте.
 
 Свёртка идемпотентна (`UPSERT`), повторный запуск после падения не задваивает
-данные. Последняя неполная минута при остановке отбрасывается.
+данные. Последняя неполная минута при остановке отбрасывается; закрытые
+минутки, накопленные с прошлого тика, сбрасываются в БД при остановке.
 
 SMART-строка пишется только при значимом изменении:
 

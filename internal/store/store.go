@@ -29,6 +29,12 @@ type DB struct {
 	ret Retention
 	now func() time.Time
 
+	// Prepared once: rebuilding the text and re-parsing it per row showed up as
+	// a third of the SQLite profile (_exprDup, _sqlite3ExprListFlags).
+	stmtMinute *sql.Stmt
+	stmtHour   *sql.Stmt
+	stmtDay    *sql.Stmt
+
 	// mu guards the series id cache and lastPrune. The aggregate loop is the
 	// only writer today; the lock keeps the cache correct if that changes.
 	mu        sync.Mutex
@@ -76,12 +82,44 @@ func Open(path string, ret Retention) (*DB, error) {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate sqlite %s: %w", path, err)
 	}
-	return &DB{
+	d := &DB{
 		sql:       sqlDB,
 		ret:       ret,
 		now:       time.Now,
 		seriesIDs: make(map[seriesKey]int64),
-	}, nil
+	}
+	if err := d.prepare(); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("prepare sqlite %s: %w", path, err)
+	}
+	return d, nil
+}
+
+// prepare builds the statements the flush path runs most often. They are bound
+// to the single connection, so preparing them once removes the parse cost from
+// every flush.
+func (d *DB) prepare() error {
+	minute := fmt.Sprintf(`
+		INSERT INTO %s (series_id, ts, avg, min, max, n)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (series_id, ts) DO UPDATE SET
+			avg = (%[1]s.avg * %[1]s.n + excluded.avg * excluded.n) /
+			      (%[1]s.n + excluded.n),
+			min = MIN(%[1]s.min, excluded.min),
+			max = MAX(%[1]s.max, excluded.max),
+			n   = %[1]s.n + excluded.n`, domain.Minute.Table())
+
+	var err error
+	if d.stmtMinute, err = d.sql.Prepare(minute); err != nil {
+		return fmt.Errorf("prepare minute insert: %w", err)
+	}
+	if d.stmtHour, err = d.sql.Prepare(rollupQuery(domain.Hour.Table(), domain.Minute.Table())); err != nil {
+		return fmt.Errorf("prepare hour rollup: %w", err)
+	}
+	if d.stmtDay, err = d.sql.Prepare(rollupQuery(domain.Day.Table(), domain.Hour.Table())); err != nil {
+		return fmt.Errorf("prepare day rollup: %w", err)
+	}
+	return nil
 }
 
 // migrate applies every embedded migration that has not run yet.
@@ -134,37 +172,31 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 		return err
 	}
 
+	insert := tx.Stmt(d.stmtMinute)
+	defer insert.Close()
 	for _, p := range clean {
-		_, err = tx.Exec(fmt.Sprintf(`
-			INSERT INTO %s (series_id, ts, avg, min, max, n)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (series_id, ts) DO UPDATE SET
-				avg = (%[1]s.avg * %[1]s.n + excluded.avg * excluded.n) /
-				      (%[1]s.n + excluded.n),
-				min = MIN(%[1]s.min, excluded.min),
-				max = MAX(%[1]s.max, excluded.max),
-				n   = %[1]s.n + excluded.n`, domain.Minute.Table()),
-			ids[seriesKey{kind: p.Kind, name: p.Name}], p.TS, p.Avg, p.Min, p.Max, p.N)
+		_, err = insert.Exec(ids[seriesKey{kind: p.Kind, name: p.Name}],
+			p.TS, p.Avg, p.Min, p.Max, p.N)
 		if err != nil {
 			return fmt.Errorf("insert minute %s:%s: %w", p.Kind, p.Name, err)
 		}
 	}
 
-	// Only buckets that received a point changed, so a delayed flush cannot
-	// drag every intervening hour through the rollup.
-	stamps := make([]int64, 0, len(clean))
+	// Only the (bucket, series) pairs that received a point changed, so only
+	// they are recomputed -- and per series, so SQLite walks the primary key
+	// range instead of sorting every series through a temp B-tree.
+	hours := map[int64]map[int64]struct{}{}
+	days := map[int64]map[int64]struct{}{}
 	for _, p := range clean {
-		stamps = append(stamps, p.TS)
+		id := ids[seriesKey{kind: p.Kind, name: p.Name}]
+		add(hours, domain.Hour.Bucket(p.TS), id)
+		add(days, domain.Day.Bucket(p.TS), id)
 	}
-	for _, h := range buckets(stamps, domain.Hour) {
-		if err := rollup(tx, domain.Hour.Table(), domain.Minute.Table(), h, h+domain.Hour.Seconds()); err != nil {
-			return err
-		}
+	if err := rollupBuckets(tx, d.stmtHour, hours, domain.Hour.Seconds()); err != nil {
+		return err
 	}
-	for _, dd := range buckets(stamps, domain.Day) {
-		if err := rollup(tx, domain.Day.Table(), domain.Hour.Table(), dd, dd+domain.Day.Seconds()); err != nil {
-			return err
-		}
+	if err := rollupBuckets(tx, d.stmtDay, days, domain.Day.Seconds()); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -175,20 +207,43 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 	return d.pruneIfDue(d.now())
 }
 
-// buckets returns the distinct bucket timestamps of res, in ascending order.
-func buckets(stamps []int64, res domain.Resolution) []int64 {
-	seen := make(map[int64]struct{}, len(stamps))
-	out := make([]int64, 0, len(stamps))
-	for _, ts := range stamps {
-		b := res.Bucket(ts)
-		if _, ok := seen[b]; ok {
-			continue
-		}
-		seen[b] = struct{}{}
-		out = append(out, b)
+func add(buckets map[int64]map[int64]struct{}, ts, id int64) {
+	set := buckets[ts]
+	if set == nil {
+		set = make(map[int64]struct{}, 8)
+		buckets[ts] = set
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
+	set[id] = struct{}{}
+}
+
+// rollupBuckets refreshes each bucket for the series that changed in it.
+func rollupBuckets(tx *sql.Tx, stmt *sql.Stmt, buckets map[int64]map[int64]struct{}, width int64) error {
+	if len(buckets) == 0 {
+		return nil
+	}
+	b := tx.Stmt(stmt)
+	defer b.Close()
+
+	keys := make([]int64, 0, len(buckets))
+	for ts := range buckets {
+		keys = append(keys, ts)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	ids := make([]int64, 0, 64)
+	for _, ts := range keys {
+		ids = ids[:0]
+		for id := range buckets[ts] {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for _, id := range ids {
+			if _, err := b.Exec(ts, id, ts, ts+width); err != nil {
+				return fmt.Errorf("rollup [%d,%d) series %d: %w", ts, ts+width, id, err)
+			}
+		}
+	}
+	return nil
 }
 
 // resolveSeries maps each key to its series id, inserting series it has not
@@ -239,20 +294,19 @@ func (d *DB) remember(ids map[seriesKey]int64) {
 }
 
 // rollup recomputes one parent bucket [from, to) from its child table.
-func rollup(tx *sql.Tx, parent, child string, from, to int64) error {
-	q := fmt.Sprintf(`
+// rollupQuery aggregates one parent bucket for a single series out of its
+// children. GROUP BY keeps the statement from inserting a NULL row when the
+// series has no children in the window.
+func rollupQuery(parent, child string) string {
+	return fmt.Sprintf(`
 		INSERT INTO %s (series_id, ts, avg, min, max, n)
 		SELECT series_id, ?, SUM(avg * n) / SUM(n), MIN(min), MAX(max), SUM(n)
 		FROM %s
-		WHERE ts >= ? AND ts < ?
+		WHERE series_id = ? AND ts >= ? AND ts < ?
 		GROUP BY series_id
 		ON CONFLICT (series_id, ts) DO UPDATE SET
 			avg = excluded.avg, min = excluded.min,
 			max = excluded.max, n = excluded.n`, parent, child)
-	if _, err := tx.Exec(q, from, from, to); err != nil {
-		return fmt.Errorf("rollup %s [%d,%d): %w", parent, from, to, err)
-	}
-	return nil
 }
 
 // Prune deletes buckets older than their retention. It is safe to call at any

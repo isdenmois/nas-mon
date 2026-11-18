@@ -130,6 +130,22 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 
+	var pprofSrv *http.Server
+	if a.cfg.PprofAddr != "" {
+		// Opt-in and loopback-only: a failed profiler must not stop monitoring.
+		pprofSrv = &http.Server{
+			Addr:              a.cfg.PprofAddr,
+			Handler:           httpapi.PprofHandler(),
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			a.log.Info("profiling enabled", "addr", a.cfg.PprofAddr)
+			if err := pprofSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				a.log.Error("pprof server stopped", "err", err)
+			}
+		}()
+	}
+
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
@@ -139,6 +155,9 @@ func (a *App) Run(ctx context.Context) error {
 	shutdownCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
 	shutdownErr := a.http.Shutdown(shutdownCtx)
+	if pprofSrv != nil {
+		_ = pprofSrv.Shutdown(shutdownCtx)
+	}
 	cancel()
 	wg.Wait()
 	if shutdownErr != nil {

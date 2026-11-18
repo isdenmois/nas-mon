@@ -102,6 +102,21 @@ MON_TEMP_INCLUDE='k10temp:|nvme:'
 (обновляется раз в `MON_SMART_INTERVAL`), а не в плитках: опрос `smartctl`
 каждые 10 секунд дёргал бы диски.
 
+### Профилирование
+
+Если кажется, что `mon` ест CPU, включи профайлер — отдельный порт, только
+loopback:
+
+```sh
+MON_PPROF_ADDR=127.0.0.1:6061 docker compose up -d
+curl -s -o /tmp/cpu.pprof 'http://127.0.0.1:6061/debug/pprof/profile?seconds=30'
+go tool pprof -top -nodecount=20 /tmp/cpu.pprof
+```
+
+Там же `/debug/pprof/heap`, `/debug/pprof/goroutine` и `/debug/pprof/trace`.
+Адрес обязан быть loopback (`127.0.0.1`, `::1`, `localhost`), иначе старт
+завершится ошибкой; на основном порту дашборда профайлера нет.
+
 ## Что хранится
 
 | Таблица | Содержимое | Срок |

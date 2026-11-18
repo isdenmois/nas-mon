@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { errorMessage, fetchOverview, isAbortError, type Overview } from '@/shared/api'
-import { formatDateTime } from '@/shared/lib'
+import { formatDateTime, pollWhileVisible } from '@/shared/lib'
 import { ChartsPage } from '@/pages/charts'
 import { OverviewPage } from '@/pages/overview'
 import { pageFromPath, pageTitle, type Page } from './routing'
@@ -14,7 +14,7 @@ const overviewBanner = 'Could not refresh overview'
 const page = ref<Page>(pageFromPath(window.location.pathname))
 
 let controller: AbortController | null = null
-let timer: ReturnType<typeof setInterval> | undefined
+let stopPolling: (() => void) | undefined
 
 const lastUpdate = computed(() =>
   overview.value ? formatDateTime(overview.value.ts) : 'Waiting for data…',
@@ -65,13 +65,13 @@ onMounted(() => {
   applyTitle()
   window.addEventListener('popstate', onPopState)
   void loadOverview()
-  timer = setInterval(() => {
+  stopPolling = pollWhileVisible(() => {
     void loadOverview()
   }, 10_000)
 })
 
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
+  stopPolling?.()
   window.removeEventListener('popstate', onPopState)
   controller?.abort()
 })

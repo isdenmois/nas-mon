@@ -2,7 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { errorMessage, fetchHistory, isAbortError } from '@/shared/api'
 import type { RangeKey } from '@/shared/config'
-import type { ChartSeries, HistorySeries, ValueFormat } from '@/shared/lib'
+import {
+  type ChartSeries,
+  type HistorySeries,
+  pollWhileVisible,
+  type ValueFormat,
+} from '@/shared/lib'
 import SeriesChart from './SeriesChart.vue'
 
 const props = withDefaults(
@@ -31,7 +36,7 @@ const error = ref('')
 
 let controller: AbortController | null = null
 let requestId = 0
-let timer: ReturnType<typeof setInterval> | undefined
+let stopPolling: (() => void) | undefined
 
 const seriesKey = computed(() => props.series.map((item) => item.id).join(','))
 
@@ -84,13 +89,13 @@ watch([() => props.range, seriesKey], () => {
 
 onMounted(() => {
   void load()
-  timer = setInterval(() => {
+  stopPolling = pollWhileVisible(() => {
     void load()
   }, props.refreshMs)
 })
 
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer)
+  stopPolling?.()
   controller?.abort()
 })
 </script>

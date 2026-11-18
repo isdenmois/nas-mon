@@ -130,11 +130,32 @@ error either way.
 `scripts/bench-cpu.sh idle 120` on a box with no dockerd and no hwmon measures
 less than the 10 ms resolution of `wait4` rusage, i.e. **under 0.01% of a core**.
 
+### Per-tick costs, measured
+
+Benchmarks turn a profile into arithmetic. Frequencies are the defaults:
+
+| Component | Benchmark | Per tick | Per hour |
+|---|---|---|---|
+| Docker read (25 containers) | `BenchmarkRead25Containers` | 0.86 ms | 52 ms (60×) |
+| Store flush (120 series) | `BenchmarkFlushFiveMinutes` | 2.3 ms | 28 ms (12×) |
+| Day prune (219 k rows) | `BenchmarkPruneDay` | 1.1 ms | 1.1 ms (1×) |
+| Host read (4 `/proc` files) | `BenchmarkHostRead` | 0.06 ms | 7 ms (120×) |
+
+Everything nameable adds up to under 0.1 s per hour. The rest of a 0.025%
+profile is Go's idle machinery — `futex`, `sysmon`'s `nanosleep`,
+`epoll_pwait` — which is what waiting looks like, not work that can be removed.
+
+At that level a profile is also statistically thin: 600 s at 0.025% is 15
+samples, so a node showing "40% of total" can be six samples. `BenchmarkHostRead`
+exists for that reason — the `/proc` parser looked like 40% of one trace and
+measured 0.8% of the real cost. Measure before refactoring a parser.
+
 ## Reproduce
 
 ```sh
 go test ./internal/collect -run XXX -bench BenchmarkRead25Containers -benchtime 20x
-go test ./internal/store   -run XXX -bench .                       -benchtime 30x
+go test ./internal/collect -run XXX -bench BenchmarkHostRead           -benchtime 200x
+go test ./internal/store   -run XXX -bench .                           -benchtime 30x
 
 just build
 scripts/bench-cpu.sh idle 300        # also: dashboard, scrape

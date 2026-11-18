@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,9 +10,9 @@ import (
 	"mon/internal/domain"
 )
 
-func openTest(t *testing.T, retentionMinute, retentionHour, retentionDay time.Duration) *DB {
+func openTest(t *testing.T, ret Retention) *DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "test.db"), retentionMinute, retentionHour, retentionDay)
+	db, err := Open(filepath.Join(t.TempDir(), "test.db"), ret)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -20,7 +21,7 @@ func openTest(t *testing.T, retentionMinute, retentionHour, retentionDay time.Du
 }
 
 func TestRollupMinuteHourDay(t *testing.T) {
-	db := openTest(t, 0, 0, 0)
+	db := openTest(t, Retention{})
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 
 	if err := db.InsertMinute([]domain.Point{
@@ -57,7 +58,7 @@ func TestRollupMinuteHourDay(t *testing.T) {
 }
 
 func TestMinuteAccumulatesOnConflict(t *testing.T) {
-	db := openTest(t, 0, 0, 0)
+	db := openTest(t, Retention{})
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 	p := domain.Point{Kind: domain.Temp, Name: "x", TS: base, Avg: 40, Min: 40, Max: 40, N: 1}
 	if err := db.InsertMinute([]domain.Point{p}); err != nil {
@@ -72,7 +73,7 @@ func TestMinuteAccumulatesOnConflict(t *testing.T) {
 }
 
 func TestPruneRespectsEveryResolution(t *testing.T) {
-	db := openTest(t, 48*time.Hour, 90*24*time.Hour, 5*365*24*time.Hour)
+	db := openTest(t, Retention{Minute: 48 * time.Hour, Hour: 90 * 24 * time.Hour, Day: 5 * 365 * 24 * time.Hour})
 	now := time.Now().UTC().Truncate(time.Minute)
 	recent := now.Add(-100 * 24 * time.Hour).Unix()
 	ancient := now.Add(-6 * 365 * 24 * time.Hour).Unix()
@@ -103,7 +104,7 @@ func TestPruneRespectsEveryResolution(t *testing.T) {
 }
 
 func TestHistoryFiltersByID(t *testing.T) {
-	db := openTest(t, 0, 0, 0)
+	db := openTest(t, Retention{})
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 	if err := db.InsertMinute([]domain.Point{
 		{Kind: domain.Temp, Name: "a", TS: base, Avg: 1, Min: 1, Max: 1, N: 1},
@@ -135,7 +136,7 @@ func TestHistoryFiltersByID(t *testing.T) {
 }
 
 func TestWearLogRoundTrip(t *testing.T) {
-	db := openTest(t, 0, 0, 0)
+	db := openTest(t, Retention{})
 	pct, tbw := int64(3), int64(123456789)
 	w := domain.WearObservation{Disk: "nvme0n1", TS: 100, Model: "Samsung", Serial: "S1",
 		PercentageUsed: &pct, TBWBytes: &tbw,
@@ -219,7 +220,7 @@ func assertPoint(t *testing.T, p api.SeriesPoint, ts int64, avg, minV, maxV floa
 
 func TestOpenIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reopen.db")
-	first, err := Open(path, 0, 0, 0)
+	first, err := Open(path, Retention{})
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	second, err := Open(path, 0, 0, 0)
+	second, err := Open(path, Retention{})
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
@@ -248,7 +249,7 @@ func TestOpenIsIdempotent(t *testing.T) {
 }
 
 func TestWearAppendIsIdempotent(t *testing.T) {
-	db := openTest(t, 0, 0, 0)
+	db := openTest(t, Retention{})
 	row := domain.WearObservation{Disk: "nvme0n1", TS: 100, Model: "Samsung",
 		Reasons: []domain.WearReason{domain.ReasonFirst}}
 	for i := 0; i < 2; i++ {
@@ -263,4 +264,204 @@ func TestWearAppendIsIdempotent(t *testing.T) {
 	if len(log) != 1 {
 		t.Errorf("retried append duplicated rows: %+v", log)
 	}
+}
+
+// A delayed or long-lived flush must not re-aggregate every hour between the
+// oldest and newest point: only buckets that actually received data change.
+func TestRollupCoversOnlyTouchedBuckets(t *testing.T) {
+	db := openTest(t, Retention{})
+	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
+	gap := base + 10*3600
+
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.Temp, Name: "cpu", TS: base, Avg: 40, Min: 30, Max: 50, N: 2},
+		{Kind: domain.Temp, Name: "cpu", TS: gap, Avg: 60, Min: 55, Max: 65, N: 3},
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	hourly := history(t, db, domain.Hour)
+	assertPoints(t, hourly, 2)
+	assertPoint(t, hourly[0].Points[0], base, 40, 30, 50, 2)
+	assertPoint(t, hourly[0].Points[1], gap, 60, 55, 65, 3)
+
+	daily := history(t, db, domain.Day)
+	assertPoints(t, daily, 1)
+	assertPoint(t, daily[0].Points[0], domain.Day.Bucket(base), 52, 30, 65, 5)
+}
+
+// Pruning scans the day table and the wear log, so it runs at most hourly
+// instead of on every flush. Rows older than retention may therefore linger
+// for up to an hour.
+func TestPruneRunsAtMostHourly(t *testing.T) {
+	db := openTest(t, Retention{Minute: time.Hour, Hour: time.Hour, Day: time.Hour})
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	at := t0
+	db.now = func() time.Time { return at }
+	ancient := t0.Add(-3 * time.Hour).Unix()
+
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.HostCPU, Name: "host", TS: ancient, Avg: 1, Min: 1, Max: 1, N: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := minuteRows(t, db, ancient); got != 0 {
+		t.Fatalf("first flush kept %d ancient rows, want 0", got)
+	}
+
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.HostCPU, Name: "host", TS: ancient, Avg: 1, Min: 1, Max: 1, N: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	at = t0.Add(30 * time.Minute)
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.HostCPU, Name: "host", TS: at.Unix(), Avg: 1, Min: 1, Max: 1, N: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := minuteRows(t, db, ancient); got != 1 {
+		t.Fatalf("flush 30m later pruned again (%d ancient rows), want the hourly gate to skip", got)
+	}
+
+	at = t0.Add(61 * time.Minute)
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.HostCPU, Name: "host", TS: at.Unix(), Avg: 1, Min: 1, Max: 1, N: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := minuteRows(t, db, ancient); got != 0 {
+		t.Fatalf("flush after the hour window kept %d ancient rows, want 0", got)
+	}
+}
+
+func TestWearPruneRespectsRetention(t *testing.T) {
+	db := openTest(t, Retention{Wear: 24 * time.Hour})
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	old := domain.WearObservation{Disk: "nvme0n1", TS: now.Add(-48 * time.Hour).Unix()}
+	recent := domain.WearObservation{Disk: "nvme0n1", TS: now.Add(-time.Hour).Unix()}
+	for _, w := range []domain.WearObservation{old, recent} {
+		if err := db.AppendWear(w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Prune(now); err != nil {
+		t.Fatal(err)
+	}
+	log, err := db.WearLog(10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(log) != 1 || log[0].TS != recent.TS {
+		t.Fatalf("wear log after prune = %+v, want only the recent row", log)
+	}
+}
+
+// Both hot queries must use an index; without one the minute-old prune and
+// /api/wear scan whole tables.
+func TestHotQueriesUseIndexes(t *testing.T) {
+	db := openTest(t, Retention{})
+	for _, q := range []struct{ name, query, index string }{
+		{"prune days", `DELETE FROM points_day WHERE ts < 1`, "points_day_ts"},
+		{"prune wear", `DELETE FROM wear_log WHERE ts < 1`, "wear_log_ts"},
+		{"wear log", `SELECT ts FROM wear_log WHERE ts >= 1 ORDER BY ts DESC LIMIT 10`, "wear_log_ts"},
+	} {
+		rows, err := db.sql.Query(`EXPLAIN QUERY PLAN ` + q.query)
+		if err != nil {
+			t.Fatalf("%s: %v", q.name, err)
+		}
+		var plan string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatalf("%s: %v", q.name, err)
+			}
+			plan += detail + "\n"
+		}
+		rows.Close()
+		if !strings.Contains(plan, q.index) {
+			t.Errorf("%s does not use %s:\n%s", q.name, q.index, plan)
+		}
+	}
+}
+
+// A rolled back transaction must not leave cached ids that do not exist.
+func TestSeriesCacheIgnoresRolledBackIDs(t *testing.T) {
+	db := openTest(t, Retention{})
+	key := seriesKey{kind: domain.Temp, name: "cpu:Tctl"}
+
+	tx, err := db.sql.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.resolveSeries(tx, []seriesKey{key}); err != nil {
+		t.Fatalf("resolve in tx: %v", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := db.cachedID(key); ok {
+		t.Fatalf("cache kept id %d from a rolled back transaction", id)
+	}
+
+	// The next real flush creates the series for real and its id must resolve.
+	if err := db.InsertMinute([]domain.Point{
+		{Kind: domain.Temp, Name: key.name, TS: 600, Avg: 1, Min: 1, Max: 1, N: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	id, ok := db.cachedID(key)
+	if !ok || id == 0 {
+		t.Fatalf("cache after commit = %d, %v", id, ok)
+	}
+	got, err := db.History([]int64{id}, 0, 1200, domain.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != key.name {
+		t.Fatalf("history for cached id = %+v", got)
+	}
+}
+
+// Known series must not rewrite the series table on every flush.
+func TestKnownSeriesSkipsSeriesWrites(t *testing.T) {
+	db := openTest(t, Retention{})
+	if _, err := db.sql.Exec(`
+		CREATE TABLE series_writes (n INTEGER NOT NULL);
+		INSERT INTO series_writes (n) VALUES (0);
+		CREATE TRIGGER count_series_write AFTER INSERT ON series
+		BEGIN UPDATE series_writes SET n = n + 1; END`); err != nil {
+		t.Fatalf("install write counter: %v", err)
+	}
+	counter := func() int {
+		t.Helper()
+		var n int
+		if err := db.sql.QueryRow(`SELECT n FROM series_writes`).Scan(&n); err != nil {
+			t.Fatalf("read counter: %v", err)
+		}
+		return n
+	}
+
+	row := domain.Point{Kind: domain.Temp, Name: "cpu", TS: 60, Avg: 1, Min: 1, Max: 1, N: 1}
+	if err := db.InsertMinute([]domain.Point{row}); err != nil {
+		t.Fatal(err)
+	}
+	before := counter()
+	row.TS = 120
+	if err := db.InsertMinute([]domain.Point{row}); err != nil {
+		t.Fatal(err)
+	}
+	if got := counter() - before; got != 0 {
+		t.Errorf("second flush wrote the series table %d times, want 0", got)
+	}
+}
+
+func minuteRows(t *testing.T, db *DB, ts int64) int {
+	t.Helper()
+	var n int
+	if err := db.sql.QueryRow(`SELECT COUNT(*) FROM points_minute WHERE ts = ?`, ts).Scan(&n); err != nil {
+		t.Fatalf("count minutes: %v", err)
+	}
+	return n
 }

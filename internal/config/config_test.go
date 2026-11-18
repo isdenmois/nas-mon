@@ -26,6 +26,9 @@ func TestDefaults(t *testing.T) {
 	if c.RetentionMinute != 48*time.Hour || c.RetentionHour != 90*24*time.Hour {
 		t.Errorf("unexpected retention: %v %v", c.RetentionMinute, c.RetentionHour)
 	}
+	if c.RetentionWear != 2*365*24*time.Hour {
+		t.Errorf("wear retention = %v, want two years", c.RetentionWear)
+	}
 	if c.TempWarnC != 80 || c.TempInclude != nil || c.DockerExclude != nil {
 		t.Errorf("unexpected defaults: warn=%v include=%v", c.TempWarnC, c.TempInclude)
 	}
@@ -43,6 +46,7 @@ func TestOverridesAndBareSeconds(t *testing.T) {
 		"MON_AGGREGATE_INTERVAL": "30s",
 		"MON_RETENTION_MINUTE":   "24h",
 		"MON_RETENTION_HOUR":     "720h",
+		"MON_RETENTION_WEAR":     "8760h",
 		"MON_TEMP_WARN_C":        "85.5",
 		"MON_TEMP_INCLUDE":       "^k10temp:",
 		"MON_TEMP_EXCLUDE":       "Tccd",
@@ -63,6 +67,9 @@ func TestOverridesAndBareSeconds(t *testing.T) {
 	}
 	if c.RetentionMinute != 24*time.Hour || c.RetentionHour != 720*time.Hour {
 		t.Errorf("retention: %v %v", c.RetentionMinute, c.RetentionHour)
+	}
+	if c.RetentionWear != 365*24*time.Hour {
+		t.Errorf("wear retention = %v", c.RetentionWear)
 	}
 	if c.TempWarnC != 85.5 {
 		t.Errorf("warn = %v", c.TempWarnC)

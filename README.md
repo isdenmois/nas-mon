@@ -68,6 +68,7 @@ docker compose up -d --build
 | `MON_RETENTION_MINUTE` | `48h` | хранение минуток (`0` — вечно) |
 | `MON_RETENTION_HOUR` | `2160h` (90 д) | хранение часовых (`0` — вечно) |
 | `MON_RETENTION_DAY` | `43800h` (5 лет) | хранение суточных (`0` — вечно) |
+| `MON_RETENTION_WEAR` | `17520h` (2 года) | хранение лога износа SSD (`0` — вечно) |
 | `MON_TEMP_WARN_C` | `80` | порог красной подсветки, °C |
 | `MON_TEMP_INCLUDE` | пусто | regex по ключу сенсора; **заменяет** выбор по умолчанию |
 | `MON_TEMP_EXCLUDE` | пусто | regex-исключение, применяется всегда |

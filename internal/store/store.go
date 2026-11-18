@@ -9,7 +9,8 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"math"
+	"sort"
+	"sync"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -24,17 +25,41 @@ var migrations embed.FS
 
 // DB is the SQLite-backed history store.
 type DB struct {
-	sql             *sql.DB
-	retentionMinute time.Duration
-	retentionHour   time.Duration
-	retentionDay    time.Duration
+	sql *sql.DB
+	ret Retention
+	now func() time.Time
+
+	// mu guards the series id cache and lastPrune. The aggregate loop is the
+	// only writer today; the lock keeps the cache correct if that changes.
+	mu        sync.Mutex
+	seriesIDs map[seriesKey]int64
+	lastPrune time.Time
+}
+
+// Retention bounds how long each level of history is kept. A zero duration
+// keeps that level forever.
+type Retention struct {
+	Minute time.Duration
+	Hour   time.Duration
+	Day    time.Duration
+	Wear   time.Duration
+}
+
+// pruneEvery bounds how often retention runs. Pruning on every flush scans the
+// day table and the wear log for rows that cannot exist until hours later.
+const pruneEvery = time.Hour
+
+// seriesKey identifies a series the way the series table does.
+type seriesKey struct {
+	kind domain.Kind
+	name string
 }
 
 // Wear is one SSD wear snapshot.
 
 // Open opens the database and applies the embedded migrations. A zero
 // retention keeps that resolution forever.
-func Open(path string, retentionMinute, retentionHour, retentionDay time.Duration) (*DB, error) {
+func Open(path string, ret Retention) (*DB, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -52,10 +77,10 @@ func Open(path string, retentionMinute, retentionHour, retentionDay time.Duratio
 		return nil, fmt.Errorf("migrate sqlite %s: %w", path, err)
 	}
 	return &DB{
-		sql:             sqlDB,
-		retentionMinute: retentionMinute,
-		retentionHour:   retentionHour,
-		retentionDay:    retentionDay,
+		sql:       sqlDB,
+		ret:       ret,
+		now:       time.Now,
+		seriesIDs: make(map[seriesKey]int64),
 	}, nil
 }
 
@@ -100,11 +125,16 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 	}
 	defer tx.Rollback()
 
+	keys := make([]seriesKey, 0, len(clean))
 	for _, p := range clean {
-		id, err := seriesTx(tx, p.Kind, p.Name)
-		if err != nil {
-			return err
-		}
+		keys = append(keys, seriesKey{kind: p.Kind, name: p.Name})
+	}
+	ids, fresh, err := d.resolveSeries(tx, keys)
+	if err != nil {
+		return err
+	}
+
+	for _, p := range clean {
 		_, err = tx.Exec(fmt.Sprintf(`
 			INSERT INTO %s (series_id, ts, avg, min, max, n)
 			VALUES (?, ?, ?, ?, ?, ?)
@@ -114,24 +144,24 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 				min = MIN(%[1]s.min, excluded.min),
 				max = MAX(%[1]s.max, excluded.max),
 				n   = %[1]s.n + excluded.n`, domain.Minute.Table()),
-			id, p.TS, p.Avg, p.Min, p.Max, p.N)
+			ids[seriesKey{kind: p.Kind, name: p.Name}], p.TS, p.Avg, p.Min, p.Max, p.N)
 		if err != nil {
 			return fmt.Errorf("insert minute %s:%s: %w", p.Kind, p.Name, err)
 		}
 	}
 
-	minHour, maxHour := int64(math.MaxInt64), int64(math.MinInt64)
+	// Only buckets that received a point changed, so a delayed flush cannot
+	// drag every intervening hour through the rollup.
+	stamps := make([]int64, 0, len(clean))
 	for _, p := range clean {
-		h := domain.Hour.Bucket(p.TS)
-		minHour = min(minHour, h)
-		maxHour = max(maxHour, h)
+		stamps = append(stamps, p.TS)
 	}
-	for h := minHour; h <= maxHour; h += domain.Hour.Seconds() {
+	for _, h := range buckets(stamps, domain.Hour) {
 		if err := rollup(tx, domain.Hour.Table(), domain.Minute.Table(), h, h+domain.Hour.Seconds()); err != nil {
 			return err
 		}
 	}
-	for dd := domain.Day.Bucket(minHour); dd <= maxHour; dd += domain.Day.Seconds() {
+	for _, dd := range buckets(stamps, domain.Day) {
 		if err := rollup(tx, domain.Day.Table(), domain.Hour.Table(), dd, dd+domain.Day.Seconds()); err != nil {
 			return err
 		}
@@ -139,7 +169,73 @@ func (d *DB) InsertMinute(points []domain.Point) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return d.Prune(time.Now())
+	// Cached only after commit: a rolled back transaction must not leave ids
+	// that do not exist.
+	d.remember(fresh)
+	return d.pruneIfDue(d.now())
+}
+
+// buckets returns the distinct bucket timestamps of res, in ascending order.
+func buckets(stamps []int64, res domain.Resolution) []int64 {
+	seen := make(map[int64]struct{}, len(stamps))
+	out := make([]int64, 0, len(stamps))
+	for _, ts := range stamps {
+		b := res.Bucket(ts)
+		if _, ok := seen[b]; ok {
+			continue
+		}
+		seen[b] = struct{}{}
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// resolveSeries maps each key to its series id, inserting series it has not
+// seen before. Newly created ids are returned separately so the caller can
+// remember them only once the enclosing transaction commits.
+func (d *DB) resolveSeries(tx *sql.Tx, keys []seriesKey) (map[seriesKey]int64, map[seriesKey]int64, error) {
+	ids := make(map[seriesKey]int64, len(keys))
+	fresh := make(map[seriesKey]int64)
+	for _, k := range keys {
+		if _, ok := ids[k]; ok {
+			continue
+		}
+		if id, ok := d.cachedID(k); ok {
+			ids[k] = id
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO series (kind, name) VALUES (?, ?)
+			ON CONFLICT (kind, name) DO NOTHING`, string(k.kind), k.name); err != nil {
+			return nil, nil, fmt.Errorf("insert series %s:%s: %w", k.kind, k.name, err)
+		}
+		var id int64
+		if err := tx.QueryRow(`SELECT id FROM series WHERE kind = ? AND name = ?`,
+			string(k.kind), k.name).Scan(&id); err != nil {
+			return nil, nil, fmt.Errorf("select series %s:%s: %w", k.kind, k.name, err)
+		}
+		ids[k] = id
+		fresh[k] = id
+	}
+	return ids, fresh, nil
+}
+
+func (d *DB) cachedID(k seriesKey) (int64, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	id, ok := d.seriesIDs[k]
+	return id, ok
+}
+
+func (d *DB) remember(ids map[seriesKey]int64) {
+	if len(ids) == 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for k, id := range ids {
+		d.seriesIDs[k] = id
+	}
 }
 
 // rollup recomputes one parent bucket [from, to) from its child table.
@@ -159,27 +255,48 @@ func rollup(tx *sql.Tx, parent, child string, from, to int64) error {
 	return nil
 }
 
-// Prune deletes minute and hour buckets older than their retention.
+// Prune deletes buckets older than their retention. It is safe to call at any
+// time; InsertMinute gates the automatic call so it runs at most hourly.
 func (d *DB) Prune(now time.Time) error {
-	if d.retentionMinute > 0 {
+	if d.ret.Minute > 0 {
 		if _, err := d.sql.Exec(`DELETE FROM `+domain.Minute.Table()+` WHERE ts < ?`,
-			now.Add(-d.retentionMinute).Unix()); err != nil {
+			now.Add(-d.ret.Minute).Unix()); err != nil {
 			return fmt.Errorf("prune minutes: %w", err)
 		}
 	}
-	if d.retentionHour > 0 {
+	if d.ret.Hour > 0 {
 		if _, err := d.sql.Exec(`DELETE FROM `+domain.Hour.Table()+` WHERE ts < ?`,
-			now.Add(-d.retentionHour).Unix()); err != nil {
+			now.Add(-d.ret.Hour).Unix()); err != nil {
 			return fmt.Errorf("prune hours: %w", err)
 		}
 	}
-	if d.retentionDay > 0 {
+	if d.ret.Day > 0 {
 		if _, err := d.sql.Exec(`DELETE FROM `+domain.Day.Table()+` WHERE ts < ?`,
-			now.Add(-d.retentionDay).Unix()); err != nil {
+			now.Add(-d.ret.Day).Unix()); err != nil {
 			return fmt.Errorf("prune days: %w", err)
 		}
 	}
+	if d.ret.Wear > 0 {
+		if _, err := d.sql.Exec(`DELETE FROM wear_log WHERE ts < ?`,
+			now.Add(-d.ret.Wear).Unix()); err != nil {
+			return fmt.Errorf("prune wear log: %w", err)
+		}
+	}
 	return nil
+}
+
+// pruneIfDue runs retention when the last run is at least pruneEvery old. The
+// timestamp is recorded before pruning so a failing prune cannot be retried on
+// every flush.
+func (d *DB) pruneIfDue(now time.Time) error {
+	d.mu.Lock()
+	if !d.lastPrune.IsZero() && now.Sub(d.lastPrune) < pruneEvery {
+		d.mu.Unlock()
+		return nil
+	}
+	d.lastPrune = now
+	d.mu.Unlock()
+	return d.Prune(now)
 }
 
 // ListSeries returns every recorded series.
@@ -390,21 +507,6 @@ func nullInt(v sql.NullInt64) *int64 {
 	}
 	n := v.Int64
 	return &n
-}
-
-// seriesTx resolves the series id inside the write transaction. No in-memory
-// cache is kept: a rolled back transaction must not leave ids that do not exist.
-func seriesTx(tx *sql.Tx, kind domain.Kind, name string) (int64, error) {
-	if _, err := tx.Exec(`INSERT INTO series (kind, name) VALUES (?, ?)
-		ON CONFLICT (kind, name) DO NOTHING`, string(kind), name); err != nil {
-		return 0, err
-	}
-	var id int64
-	if err := tx.QueryRow(`SELECT id FROM series WHERE kind = ? AND name = ?`,
-		string(kind), name).Scan(&id); err != nil {
-		return 0, err
-	}
-	return id, nil
 }
 
 func placeholders(n int) string {

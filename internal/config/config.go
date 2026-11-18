@@ -25,6 +25,7 @@ const (
 	DefaultRetentionMinute   = 48 * time.Hour
 	DefaultRetentionHour     = 90 * 24 * time.Hour
 	DefaultRetentionDay      = 5 * 365 * 24 * time.Hour
+	DefaultRetentionWear     = 2 * 365 * 24 * time.Hour
 	DefaultTempWarnC         = 80.0
 	DefaultLogLevel          = "info"
 )
@@ -44,6 +45,7 @@ type Config struct {
 	RetentionMinute   time.Duration
 	RetentionHour     time.Duration
 	RetentionDay      time.Duration
+	RetentionWear     time.Duration
 	TempWarnC         float64
 	TempInclude       *regexp.Regexp
 	TempExclude       *regexp.Regexp
@@ -71,6 +73,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		RetentionMinute:   DefaultRetentionMinute,
 		RetentionHour:     DefaultRetentionHour,
 		RetentionDay:      DefaultRetentionDay,
+		RetentionWear:     DefaultRetentionWear,
 		TempWarnC:         DefaultTempWarnC,
 		LogLevel:          DefaultLogLevel,
 	}
@@ -131,6 +134,7 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	setDur("MON_RETENTION_MINUTE", &c.RetentionMinute)
 	setDur("MON_RETENTION_HOUR", &c.RetentionHour)
 	setDur("MON_RETENTION_DAY", &c.RetentionDay)
+	setDur("MON_RETENTION_WEAR", &c.RetentionWear)
 	setRegexp("MON_TEMP_INCLUDE", &c.TempInclude)
 	setRegexp("MON_TEMP_EXCLUDE", &c.TempExclude)
 	setRegexp("MON_DOCKER_EXCLUDE", &c.DockerExclude)
@@ -147,8 +151,8 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	if c.AggregateInterval <= 0 {
 		errs = append(errs, errors.New("MON_AGGREGATE_INTERVAL: must be positive"))
 	}
-	if c.RetentionMinute < 0 || c.RetentionHour < 0 || c.RetentionDay < 0 {
-		errs = append(errs, errors.New("MON_RETENTION_MINUTE, MON_RETENTION_HOUR and MON_RETENTION_DAY must not be negative (0 keeps data forever)"))
+	if c.RetentionMinute < 0 || c.RetentionHour < 0 || c.RetentionDay < 0 || c.RetentionWear < 0 {
+		errs = append(errs, errors.New("MON_RETENTION_MINUTE, MON_RETENTION_HOUR, MON_RETENTION_DAY and MON_RETENTION_WEAR must not be negative (0 keeps data forever)"))
 	}
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)

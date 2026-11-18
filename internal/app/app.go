@@ -16,8 +16,8 @@ import (
 
 	"mon/internal/collect"
 	"mon/internal/config"
-	"mon/internal/monitor"
 	"mon/internal/httpapi"
+	"mon/internal/monitor"
 	"mon/internal/store"
 )
 
@@ -48,7 +48,12 @@ func New(cfg config.Config, log *slog.Logger) (*App, error) {
 			return nil, fmt.Errorf("create database directory: %w", err)
 		}
 	}
-	db, err := store.Open(cfg.DBPath, cfg.RetentionMinute, cfg.RetentionHour, cfg.RetentionDay)
+	db, err := store.Open(cfg.DBPath, store.Retention{
+		Minute: cfg.RetentionMinute,
+		Hour:   cfg.RetentionHour,
+		Day:    cfg.RetentionDay,
+		Wear:   cfg.RetentionWear,
+	})
 	if err != nil {
 		return nil, err
 	}

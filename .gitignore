@@ -10,3 +10,4 @@
 !/internal/httpapi/dist/index.html
 
 .env
+/bin/

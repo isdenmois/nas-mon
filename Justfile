@@ -50,3 +50,7 @@ docker:
 # Remove build artifacts
 clean:
     rm -rf bin
+
+# Measure the binary's own CPU time: just bench [idle|dashboard|scrape] [seconds]
+bench scenario="idle" seconds="300":
+    scripts/bench-cpu.sh {{scenario}} {{seconds}}

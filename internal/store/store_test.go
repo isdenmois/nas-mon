@@ -34,8 +34,10 @@ func TestRollupMinuteHourDay(t *testing.T) {
 
 	hourly := history(t, db, domain.Hour)
 	assertPoints(t, hourly, 2)
-	assertPoint(t, hourly[0].Points[0], base, 46, 30, 60, 5)
-	assertPoint(t, hourly[0].Points[1], base+3600, 60, 55, 65, 4)
+	assertPoint(t, hourly[0].Points[0], base, 46)
+	assertStored(t, db, domain.Hour, base, 46, 30, 60, 5)
+	assertPoint(t, hourly[0].Points[1], base+3600, 60)
+	assertStored(t, db, domain.Hour, base+3600, 60, 55, 65, 4)
 
 	daily := history(t, db, domain.Day)
 	assertPoints(t, daily, 1)
@@ -43,9 +45,7 @@ func TestRollupMinuteHourDay(t *testing.T) {
 	if got := daily[0].Points[0].Avg; got < 52.22 || got > 52.23 {
 		t.Errorf("daily avg = %v, want ~52.222", got)
 	}
-	if daily[0].Points[0].N != 9 {
-		t.Errorf("daily n = %d, want 9", daily[0].Points[0].N)
-	}
+	assertStored(t, db, domain.Day, domain.Day.Bucket(base), daily[0].Points[0].Avg, 30, 65, 9)
 
 	// A new minute in the first hour must recompute that hour from all minutes.
 	if err := db.InsertMinute([]domain.Point{
@@ -54,7 +54,8 @@ func TestRollupMinuteHourDay(t *testing.T) {
 		t.Fatalf("insert second: %v", err)
 	}
 	hourly = history(t, db, domain.Hour)
-	assertPoint(t, hourly[0].Points[0], base, 50, 30, 70, 6)
+	assertPoint(t, hourly[0].Points[0], base, 50)
+	assertStored(t, db, domain.Hour, base, 50, 30, 70, 6)
 }
 
 func TestMinuteAccumulatesOnConflict(t *testing.T) {
@@ -69,7 +70,8 @@ func TestMinuteAccumulatesOnConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := history(t, db, domain.Minute)
-	assertPoint(t, m[0].Points[0], base, 45, 40, 50, 2)
+	assertPoint(t, m[0].Points[0], base, 45)
+	assertStored(t, db, domain.Minute, base, 45, 40, 50, 2)
 }
 
 func TestPruneRespectsEveryResolution(t *testing.T) {
@@ -210,11 +212,29 @@ func assertPoints(t *testing.T, h []api.SeriesHistory, want int) {
 	}
 }
 
-func assertPoint(t *testing.T, p api.SeriesPoint, ts int64, avg, minV, maxV float64, n int64) {
+// assertPoint checks what the API returns: the bucket timestamp and average.
+func assertPoint(t *testing.T, p api.SeriesPoint, ts int64, avg float64) {
 	t.Helper()
-	if p.TS != ts || p.Avg != avg || p.Min != minV || p.Max != maxV || p.N != n {
-		t.Errorf("point = %+v, want ts=%d avg=%v min=%v max=%v n=%d",
-			p, ts, avg, minV, maxV, n)
+	if p.TS != ts || p.Avg != avg {
+		t.Errorf("point = %+v, want ts=%d avg=%v", p, ts, avg)
+	}
+}
+
+// assertStored checks the aggregation columns the rollup produced. They stay in
+// the database even though the history API only serves ts and avg.
+func assertStored(t *testing.T, db *DB, res domain.Resolution, ts int64, avg, minV, maxV float64, n int64) {
+	t.Helper()
+	var gotAvg, gotMin, gotMax float64
+	var gotN int64
+	err := db.sql.QueryRow(
+		`SELECT avg, min, max, n FROM `+res.Table()+` WHERE ts = ?`, ts).
+		Scan(&gotAvg, &gotMin, &gotMax, &gotN)
+	if err != nil {
+		t.Fatalf("read %s row at %d: %v", res, ts, err)
+	}
+	if gotAvg != avg || gotMin != minV || gotMax != maxV || gotN != n {
+		t.Errorf("%s row = avg %v min %v max %v n %d, want avg %v min %v max %v n %d",
+			res, gotAvg, gotMin, gotMax, gotN, avg, minV, maxV, n)
 	}
 }
 
@@ -282,12 +302,15 @@ func TestRollupCoversOnlyTouchedBuckets(t *testing.T) {
 
 	hourly := history(t, db, domain.Hour)
 	assertPoints(t, hourly, 2)
-	assertPoint(t, hourly[0].Points[0], base, 40, 30, 50, 2)
-	assertPoint(t, hourly[0].Points[1], gap, 60, 55, 65, 3)
+	assertPoint(t, hourly[0].Points[0], base, 40)
+	assertStored(t, db, domain.Hour, base, 40, 30, 50, 2)
+	assertPoint(t, hourly[0].Points[1], gap, 60)
+	assertStored(t, db, domain.Hour, gap, 60, 55, 65, 3)
 
 	daily := history(t, db, domain.Day)
 	assertPoints(t, daily, 1)
-	assertPoint(t, daily[0].Points[0], domain.Day.Bucket(base), 52, 30, 65, 5)
+	assertPoint(t, daily[0].Points[0], domain.Day.Bucket(base), 52)
+	assertStored(t, db, domain.Day, domain.Day.Bucket(base), 52, 30, 65, 5)
 }
 
 // Pruning scans the day table and the wear log, so it runs at most hourly

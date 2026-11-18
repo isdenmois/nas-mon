@@ -12,13 +12,12 @@ const (
 	StepDay    Step = "day"
 )
 
-// SeriesPoint is one aggregated bucket in a history response.
+// SeriesPoint is one aggregated bucket in a history response. Only what the
+// charts draw crosses the wire: min, max and n stay in the database because
+// rollups need them, but sending them tripled the payload for nobody.
 type SeriesPoint struct {
 	TS  int64   `json:"ts"`
 	Avg float64 `json:"avg"`
-	Min float64 `json:"min"`
-	Max float64 `json:"max"`
-	N   int64   `json:"n"`
 }
 
 // SeriesHistory is the history of one series. Kind and name are informational:

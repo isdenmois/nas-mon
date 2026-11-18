@@ -132,18 +132,30 @@ less than the 10 ms resolution of `wait4` rusage, i.e. **under 0.01% of a core**
 
 ### The dashboard is the expensive part
 
-`BenchmarkHistory24h` measures one charts-page request: 24 hours at minute
-resolution for 25 series.
+`BenchmarkHistory24h` measures the database side of one charts-page request:
+24 hours at minute resolution for 25 series. `BenchmarkHistoryHandler24h`
+measures the same answer through the real HTTP handler, including JSON.
 
-| | value |
-|---|---|
-| one /api/history request | **32 ms**, 10.4 MB allocated, 432 k allocs |
-| charts page (8 requests/min) | **256 ms/min = 15 s/h** |
+| | original | now |
+|---|---|---|
+| one `/api/history` request (DB) | 32 ms, 10.4 MB, 432 k allocs | **13.5 ms**, 3.4 MB, 144 k allocs |
+| one request, encoded (handler) | 4.8 ms | **2.7 ms** |
+| charts page (8 requests/min) | 293 ms/min = 17.6 s/h | **130 ms/min = 7.8 s/h** |
+
+Two changes did it:
+
+- the history query resolves `series` **once per request** instead of joining it
+  into every point row. Joining re-read and re-allocated `kind` and `name` for
+  each of 36 000 buckets; the query is now a primary-key seek per series with no
+  sort at all.
+- a point on the wire is `{ts, avg}`. `min`, `max` and `n` stay in the database
+  because rollups need them, but the charts only draw the average, so encoding
+  them was paying twice for nothing.
 
 For comparison the whole background costs under 0.1 s/h. A visible charts tab
-is therefore ~17x more expensive than every collector and flush combined --
-which is why the tab pauses itself when hidden, and why any further CPU work
-belongs here, not in the loops.
+is still ~8x more expensive than every collector and flush combined -- which is
+why the tab pauses itself when hidden, and why any further CPU work belongs
+here, not in the loops.
 
 ### Per-tick costs, measured
 

@@ -76,7 +76,7 @@ func TestShutdownFlushesClosedBuckets(t *testing.T) {
 	if len(got) != 1 || len(got[0].Points) != 1 {
 		t.Fatalf("history after shutdown flush = %+v", got)
 	}
-	if p := got[0].Points[0]; p.N != 1 || p.Avg != 42 {
+	if p := got[0].Points[0]; p.Avg != 42 {
 		t.Errorf("point = %+v, want one sample of 42", p)
 	}
 }

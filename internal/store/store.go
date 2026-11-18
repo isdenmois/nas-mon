@@ -411,16 +411,27 @@ func (d *DB) History(ids []int64, from, to int64, res domain.Resolution) ([]api.
 	if len(ids) == 0 {
 		return nil, nil
 	}
+
+	// Metadata once per series, not once per point: joining series into the
+	// row query re-read and re-allocated kind and name for every bucket.
+	meta, err := d.Series(ids)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[int64]domain.Series, len(meta))
+	for _, s := range meta {
+		known[s.ID] = s
+	}
+
 	args := []any{from, to}
 	for _, id := range ids {
 		args = append(args, id)
 	}
 	query := fmt.Sprintf(`
-		SELECT s.id, s.kind, s.name, p.ts, p.avg, p.min, p.max, p.n
-		FROM %s p
-		JOIN series s ON s.id = p.series_id
-		WHERE p.ts >= ? AND p.ts < ? AND s.id IN (%s)
-		ORDER BY s.id, p.ts`, table, placeholders(len(ids)))
+		SELECT series_id, ts, avg
+		FROM %s
+		WHERE ts >= ? AND ts < ? AND series_id IN (%s)
+		ORDER BY series_id, ts`, table, placeholders(len(ids)))
 
 	rows, err := d.sql.Query(query, args...)
 	if err != nil {
@@ -428,20 +439,27 @@ func (d *DB) History(ids []int64, from, to int64, res domain.Resolution) ([]api.
 	}
 	defer rows.Close()
 
-	var out []api.SeriesHistory
-	byID := map[int64]int{}
+	out := make([]api.SeriesHistory, 0, len(known))
+	byID := make(map[int64]int, len(known))
 	for rows.Next() {
 		var id int64
-		var kind, name string
 		var p api.SeriesPoint
-		if err := rows.Scan(&id, &kind, &name, &p.TS, &p.Avg, &p.Min, &p.Max, &p.N); err != nil {
+		if err := rows.Scan(&id, &p.TS, &p.Avg); err != nil {
 			return nil, err
 		}
 		i, ok := byID[id]
 		if !ok {
+			s, exists := known[id]
+			if !exists {
+				// The series row disappeared between the two queries.
+				continue
+			}
 			i = len(out)
 			byID[id] = i
-			out = append(out, api.SeriesHistory{ID: id, Kind: kind, Name: name})
+			out = append(out, api.SeriesHistory{
+				ID: id, Kind: string(s.Kind), Name: s.Name,
+				Points: make([]api.SeriesPoint, 0, 64),
+			})
 		}
 		out[i].Points = append(out[i].Points, p)
 	}

@@ -44,7 +44,7 @@ dashboard)
     while ((SECONDS < end)); do
       curl -s -o /dev/null "$base/api/overview" || true
       for ids in 1,2,3 4,5 6,7,8 1,2,3,4,5,6,7,8; do
-        curl -s -o /dev/null "$base/api/history?ids=$ids&range=24h" || true
+        curl -s -o /dev/null "$base/api/history?id=$ids&range=24h" || true
       done
       sleep 10
     done

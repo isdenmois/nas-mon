@@ -310,13 +310,9 @@ export function historyFor(ids: number[], range: string): HistoryResponse {
         kind: descriptor.kind,
         name: descriptor.name,
         points: Array.from({ length: POINT_COUNT }, (_, index) => {
-          const avg = valueFor(descriptor.kind, descriptor.name, index)
           return {
             ts: from + index * STEP_SECONDS,
-            avg,
-            min: avg * 0.9,
-            max: avg * 1.1,
-            n: 1,
+            avg: valueFor(descriptor.kind, descriptor.name, index),
           }
         }),
       },

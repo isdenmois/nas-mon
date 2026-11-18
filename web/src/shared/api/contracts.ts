@@ -82,9 +82,6 @@ export interface Overview {
 export interface SeriesPoint {
   ts: number
   avg: number
-  min: number
-  max: number
-  n: number
 }
 
 export interface SeriesHistory {

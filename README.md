@@ -168,6 +168,10 @@ heartbeat-а нет. График TBW строится по этому логу,
 `host_cpu`, `host_mem`, `host_load1/5/15`, `host_net_rx/tx`, `container_cpu`,
 `container_mem`, `container_mem_pct`, `container_net_rx/tx`, `volume_used_pct`.
 
+Точка истории — `{ts, avg}`: min/max/n остаются в БД (по ним считаются свёртки),
+но по проводу не ходят, потому что графики рисуют только среднее. Для 24 часов
+минутного разрешения это вдвое меньше трафика на каждый запрос.
+
 Пример scrape-конфига:
 
 ```yaml
